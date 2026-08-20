@@ -1,3 +1,5 @@
+import { migrateEventClassification } from '../types/storm';
+
 const DB_NAME = 'StormArchiveDB';
 const DB_VERSION = 1;
 const STORE_NAME = 'events';
@@ -23,27 +25,48 @@ const openDB = () => {
 export const getStoredEvents = async () => {
   try {
     const db = await openDB();
-    return new Promise((resolve, reject) => {
+    const events = await new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
       const req = store.getAll();
       req.onsuccess = () => resolve(req.result || []);
       req.onerror = () => reject(req.error);
     });
+    const migrated = events.map(migrateEventClassification);
+    const changed = migrated.filter((event, index) => event !== events[index]);
+    if (changed.length) {
+      try {
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction(STORE_NAME, 'readwrite');
+          const store = tx.objectStore(STORE_NAME);
+          changed.forEach(event => store.put(event));
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+        });
+      } catch (migrationError) {
+        console.warn('Could not persist classification migration', migrationError);
+      }
+    }
+    return migrated;
   } catch (err) {
     console.warn('IndexedDB unavailable, falling back to localStorage', err);
     const local = localStorage.getItem('storm_archive_events');
-    return local ? JSON.parse(local) : [];
+    const events = local ? JSON.parse(local) : [];
+    const migrated = events.map(migrateEventClassification);
+    if (migrated.some((event, index) => event !== events[index])) {
+      localStorage.setItem('storm_archive_events', JSON.stringify(migrated));
+    }
+    return migrated;
   }
 };
 
 export const saveEvent = async (eventData) => {
   const now = new Date().toISOString();
-  const item = {
+  const item = migrateEventClassification({
     ...eventData,
     updatedAt: now,
     createdAt: eventData.createdAt || now
-  };
+  });
 
   try {
     const db = await openDB();

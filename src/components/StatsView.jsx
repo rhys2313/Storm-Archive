@@ -1,5 +1,5 @@
 import React from 'react';
-import { EVENT_TYPES, SEVERITY_LEVELS, HAZARDS } from '../types/storm';
+import { EVENT_CATEGORIES, SEVERITY_LEVELS, HAZARDS, getEventClassification } from '../types/storm';
 import { BarChart2, Zap, Calendar, MapPin, Gauge, Wind, Thermometer, ShieldAlert, Sparkles, PieChart } from 'lucide-react';
 
 export default function StatsView({ events, onOpenAddModal }) {
@@ -28,12 +28,13 @@ export default function StatsView({ events, onOpenAddModal }) {
   const withCoordsCount = events.filter(e => e.latitude && e.longitude).length;
   const severeCount = events.filter(e => e.severity === 'severe' || e.severity === 'extreme').length;
 
-  // Breakdown by Event Type
+  // Breakdown by top-level classification group
   const typeCounts = {};
-  Object.keys(EVENT_TYPES).forEach(k => { typeCounts[k] = 0; });
+  Object.keys(EVENT_CATEGORIES).forEach(k => { typeCounts[k] = 0; });
   events.forEach(e => {
-    if (typeCounts[e.eventType] !== undefined) {
-      typeCounts[e.eventType]++;
+    const { category } = getEventClassification(e);
+    if (typeCounts[category] !== undefined) {
+      typeCounts[category]++;
     } else {
       typeCounts.other++;
     }
@@ -117,13 +118,13 @@ export default function StatsView({ events, onOpenAddModal }) {
         {/* Distribution by Event Type */}
         <div className="chart-box">
           <h3 className="chart-title">
-            <PieChart size={18} /> Распределение по типам метеоявлений
+            <PieChart size={18} /> Распределение по группам метеоявлений
           </h3>
           <div className="bar-list">
             {Object.entries(typeCounts)
               .filter(([_, count]) => count > 0)
               .map(([typeKey, count]) => {
-                const typeInfo = EVENT_TYPES[typeKey] || EVENT_TYPES.other;
+                const typeInfo = EVENT_CATEGORIES[typeKey] || EVENT_CATEGORIES.other;
                 const percentage = Math.round((count / totalCount) * 100);
                 return (
                   <div key={typeKey} className="bar-item">

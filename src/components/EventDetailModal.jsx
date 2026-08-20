@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { EVENT_TYPES, SEVERITY_LEVELS, HAZARDS } from '../types/storm';
+import { SEVERITY_LEVELS, HAZARDS, getClassificationAttributeLabels, getClassificationLabel, getEventTypeInfo } from '../types/storm';
 import { X, Calendar, MapPin, Edit2, Trash2, Zap, Gauge, Wind, Thermometer, Droplets, Camera, Compass, Tag, Maximize2 } from 'lucide-react';
 
 export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
@@ -7,7 +7,9 @@ export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
 
   if (!event) return null;
 
-  const eventType = EVENT_TYPES[event.eventType] || EVENT_TYPES.other;
+  const eventType = getEventTypeInfo(event);
+  const classificationLabel = getClassificationLabel(event);
+  const classificationAttributes = getClassificationAttributeLabels(event);
   const severity = SEVERITY_LEVELS[event.severity] || SEVERITY_LEVELS.moderate;
 
   const formattedDate = event.date 
@@ -32,7 +34,7 @@ export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
                 style={{ backgroundColor: `${eventType.color}20`, color: eventType.color, borderColor: `${eventType.color}40` }}
               >
                 <span className="badge-dot" style={{ backgroundColor: eventType.color }}></span>
-                {eventType.label}
+                {classificationLabel}
               </span>
               <span className={`severity-badge ${severity.badgeClass}`}>
                 {severity.label}
@@ -71,6 +73,14 @@ export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
                 </div>
               </div>
             )}
+          </div>
+
+          <div className="detail-section">
+            <h4 className="section-subtitle"><Compass size={16} /> Классификация явления</h4>
+            <div className="classification-detail">
+              <span className="classification-main">{classificationLabel}</span>
+              {classificationAttributes.map(label => <span key={label} className="classification-attribute">{label}</span>)}
+            </div>
           </div>
 
           {/* User Photos Gallery */}

@@ -1,12 +1,14 @@
 import React from 'react';
-import { EVENT_TYPES, SEVERITY_LEVELS } from '../types/storm';
+import { EVENT_CATEGORIES, SEVERITY_LEVELS } from '../types/storm';
 import { Search, SlidersHorizontal, X, ArrowDownUp } from 'lucide-react';
 
 export default function FilterBar({ 
   searchQuery, 
   setSearchQuery, 
-  typeFilter, 
-  setTypeFilter, 
+  categoryFilter,
+  setCategoryFilter,
+  subtypeFilter,
+  setSubtypeFilter,
   severityFilter, 
   setSeverityFilter, 
   sortBy, 
@@ -14,7 +16,12 @@ export default function FilterBar({
   totalResults,
   onReset
 }) {
-  const isFiltered = searchQuery || typeFilter || severityFilter || sortBy !== 'newest';
+  const isFiltered = searchQuery || categoryFilter || subtypeFilter || severityFilter || sortBy !== 'newest';
+
+  const handleCategoryChange = (nextCategory) => {
+    setCategoryFilter(nextCategory);
+    setSubtypeFilter('');
+  };
 
   return (
     <div className="filter-bar">
@@ -38,16 +45,27 @@ export default function FilterBar({
         <div className="filter-controls">
           <div className="select-wrapper">
             <select 
-              value={typeFilter} 
-              onChange={(e) => setTypeFilter(e.target.value)}
+              value={categoryFilter}
+              onChange={(e) => handleCategoryChange(e.target.value)}
               className="filter-select"
             >
-              <option value="">Все типы явлений</option>
-              {Object.values(EVENT_TYPES).map(t => (
+              <option value="">Все группы явлений</option>
+              {Object.values(EVENT_CATEGORIES).map(t => (
                 <option key={t.id} value={t.id}>{t.label}</option>
               ))}
             </select>
           </div>
+
+          {categoryFilter && EVENT_CATEGORIES[categoryFilter].subtypes.length > 1 && (
+            <div className="select-wrapper">
+              <select value={subtypeFilter} onChange={(e) => setSubtypeFilter(e.target.value)} className="filter-select">
+                <option value="">Все подтипы</option>
+                {EVENT_CATEGORIES[categoryFilter].subtypes.map(item => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="select-wrapper">
             <select 

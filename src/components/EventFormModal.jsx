@@ -1,12 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { EVENT_TYPES, SEVERITY_LEVELS, HAZARDS } from '../types/storm';
+import {
+  EVENT_CATEGORIES,
+  SEVERITY_LEVELS,
+  HAZARDS,
+  MCS_STRUCTURAL_FEATURES,
+  HAIL_SIZE_CLASSES,
+  SQUALL_INTENSITIES,
+  TORNADO_ORIGINS,
+  TORNADO_INTENSITIES,
+  getDefaultClassificationAttributes,
+  getEventClassification
+} from '../types/storm';
 import { parsePhotoMetadata } from '../services/exif';
 import { X, Upload, Trash2, Camera, MapPin, Sparkles, AlertCircle } from 'lucide-react';
 
 export default function EventFormModal({ eventToEdit, onClose, onSave }) {
   const [title, setTitle] = useState('');
   const [date, setDate] = useState('');
-  const [eventType, setEventType] = useState('thunderstorm');
+  const [category, setCategory] = useState('thunderstorm');
+  const [subtype, setSubtype] = useState('unspecified');
+  const [classificationAttributes, setClassificationAttributes] = useState({});
   const [severity, setSeverity] = useState('moderate');
   const [location, setLocation] = useState('');
   const [latitude, setLatitude] = useState('');
@@ -32,7 +45,10 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
     if (eventToEdit) {
       setTitle(eventToEdit.title || '');
       setDate(eventToEdit.date || '');
-      setEventType(eventToEdit.eventType || 'thunderstorm');
+      const classification = getEventClassification(eventToEdit);
+      setCategory(classification.category);
+      setSubtype(classification.subtype);
+      setClassificationAttributes(classification.attributes);
       setSeverity(eventToEdit.severity || 'moderate');
       setLocation(eventToEdit.location || '');
       setLatitude(eventToEdit.latitude !== undefined && eventToEdit.latitude !== null ? String(eventToEdit.latitude) : '');
@@ -56,8 +72,46 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
       const now = new Date();
       now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
       setDate(now.toISOString().slice(0, 16));
+      setCategory('thunderstorm');
+      setSubtype('unspecified');
+      setClassificationAttributes(getDefaultClassificationAttributes('thunderstorm'));
     }
   }, [eventToEdit]);
+
+  const handleCategoryChange = (nextCategory) => {
+    setCategory(nextCategory);
+    setSubtype('unspecified');
+    setClassificationAttributes(getDefaultClassificationAttributes(nextCategory));
+  };
+
+  const handleSubtypeChange = (nextSubtype) => {
+    setSubtype(nextSubtype);
+    setClassificationAttributes(getDefaultClassificationAttributes(category, nextSubtype));
+  };
+
+  const toggleMcsFeature = (featureId) => {
+    setClassificationAttributes(previous => {
+      const structuralFeatures = previous.structuralFeatures || [];
+      return {
+        ...previous,
+        structuralFeatures: structuralFeatures.includes(featureId)
+          ? structuralFeatures.filter(id => id !== featureId)
+          : [...structuralFeatures, featureId]
+      };
+    });
+  };
+
+  const handleTornadoOriginChange = (tornadoOrigin) => {
+    setClassificationAttributes(previous => {
+      const next = { ...previous, tornadoOrigin };
+      if (tornadoOrigin === 'non_mesocyclonic') {
+        delete next.tornadoIntensity;
+      } else if (!next.tornadoIntensity) {
+        next.tornadoIntensity = 'ifu';
+      }
+      return next;
+    });
+  };
 
   const handleHazardToggle = (hazardKey) => {
     setSelectedHazards(prev => 
@@ -145,7 +199,12 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
       id: eventToEdit ? eventToEdit.id : 'evt_' + Date.now(),
       title: title.trim(),
       date,
-      eventType,
+      eventType: category,
+      classification: {
+        category,
+        subtype,
+        attributes: classificationAttributes
+      },
       severity,
       location: location.trim(),
       latitude: latitude !== '' ? parseFloat(latitude) : null,
@@ -214,18 +273,100 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
             </div>
 
             <div className="form-group">
-              <label className="form-label">Тип явления</label>
+              <label className="form-label">Группа явления</label>
               <select 
-                value={eventType} 
-                onChange={(e) => setEventType(e.target.value)}
+                value={category}
+                onChange={(e) => handleCategoryChange(e.target.value)}
                 className="form-select"
               >
-                {Object.values(EVENT_TYPES).map(t => (
+                {Object.values(EVENT_CATEGORIES).map(t => (
                   <option key={t.id} value={t.id}>{t.label}</option>
                 ))}
               </select>
             </div>
+
+            <div className="form-group">
+              <label className="form-label">Подтип</label>
+              <select value={subtype} onChange={(e) => handleSubtypeChange(e.target.value)} className="form-select">
+                {EVENT_CATEGORIES[category].subtypes.map(item => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+              {EVENT_CATEGORIES[category].subtypes.find(item => item.id === subtype)?.description && (
+                <span className="form-help-text">{EVENT_CATEGORIES[category].subtypes.find(item => item.id === subtype).description}</span>
+              )}
+            </div>
           </div>
+
+          {category === 'mcs' && (
+            <div className="form-group">
+              <label className="form-label">Структурные признаки</label>
+              <div className="hazards-checkboxes">
+                {MCS_STRUCTURAL_FEATURES.map(feature => {
+                  const checked = (classificationAttributes.structuralFeatures || []).includes(feature.id);
+                  return (
+                    <label key={feature.id} className={`hazard-checkbox-label ${checked ? 'checked' : ''}`}>
+                      <input type="checkbox" checked={checked} onChange={() => toggleMcsFeature(feature.id)} className="hidden-checkbox" />
+                      <span>{feature.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {category === 'hail' && (
+            <div className="form-group">
+              <label className="form-label">Класс града</label>
+              <select
+                value={classificationAttributes.hailSizeClass || 'unspecified'}
+                onChange={(e) => setClassificationAttributes({ hailSizeClass: e.target.value })}
+                className="form-select"
+              >
+                {HAIL_SIZE_CLASSES.map(item => <option key={item.id} value={item.id}>{item.label}{item.description ? ` — ${item.description}` : ''}</option>)}
+              </select>
+            </div>
+          )}
+
+          {category === 'squall' && (
+            <div className="form-group">
+              <label className="form-label">Интенсивность шквала</label>
+              <select
+                value={classificationAttributes.squallIntensity || 'unspecified'}
+                onChange={(e) => setClassificationAttributes({ squallIntensity: e.target.value })}
+                className="form-select"
+              >
+                {SQUALL_INTENSITIES.map(item => <option key={item.id} value={item.id}>{item.label}{item.description ? ` — ${item.description}` : ''}</option>)}
+              </select>
+            </div>
+          )}
+
+          {category === 'tornadic' && subtype === 'tornado' && (
+            <div className="form-grid-2">
+              <div className="form-group">
+                <label className="form-label">Происхождение торнадо</label>
+                <select
+                  value={classificationAttributes.tornadoOrigin || 'unspecified'}
+                  onChange={(e) => handleTornadoOriginChange(e.target.value)}
+                  className="form-select"
+                >
+                  {TORNADO_ORIGINS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </select>
+              </div>
+              {classificationAttributes.tornadoOrigin !== 'non_mesocyclonic' && (
+                <div className="form-group">
+                  <label className="form-label">Интенсивность торнадо</label>
+                  <select
+                    value={classificationAttributes.tornadoIntensity || 'ifu'}
+                    onChange={(e) => setClassificationAttributes(previous => ({ ...previous, tornadoIntensity: e.target.value }))}
+                    className="form-select"
+                  >
+                    {TORNADO_INTENSITIES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="form-grid-2">
             <div className="form-group">
