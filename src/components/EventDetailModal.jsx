@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { EVENT_TYPES, SEVERITY_LEVELS, HAZARDS } from '../types/storm';
-import { X, Calendar, MapPin, Edit2, Trash2, Zap, Gauge, Wind, Thermometer, Droplets, Camera, Compass, Tag, Maximize2 } from 'lucide-react';
+import { X, Calendar, MapPin, Edit2, Trash2, Zap, Gauge, Wind, Thermometer, Droplets, Camera, Compass, Tag, Maximize2, FileText, Video } from 'lucide-react';
 
 export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
   const [activePhotoIdx, setActivePhotoModalIdx] = useState(null);
@@ -9,6 +9,7 @@ export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
 
   const eventType = EVENT_TYPES[event.eventType] || EVENT_TYPES.other;
   const severity = SEVERITY_LEVELS[event.severity] || SEVERITY_LEVELS.moderate;
+  const otherAttachments = (event.attachments || []).filter(attachment => attachment.kind !== 'photo');
 
   const formattedDate = event.date 
     ? new Date(event.date).toLocaleDateString('ru-RU', {
@@ -90,6 +91,24 @@ export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
                     {photo.exif && photo.exif.camera && (
                       <span className="photo-exif-tag">{photo.exif.camera}</span>
                     )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {otherAttachments.length > 0 && (
+            <div className="detail-section">
+              <h4 className="section-subtitle"><FileText size={16} /> Материалы ({otherAttachments.length})</h4>
+              <div className="form-photos-list">
+                {otherAttachments.map(attachment => (
+                  <div key={attachment.id} className="form-photo-row">
+                    {attachment.kind === 'video' ? <Video size={22} /> : <FileText size={22} />}
+                    <div className="caption-input">
+                      <strong>{attachment.name}</strong>
+                      <span>{attachment.mimeType || 'неизвестный тип'} · {(attachment.size / 1024 / 1024).toFixed(1)} МБ</span>
+                    </div>
+                    {attachment.kind === 'video' && attachment.url ? <video controls preload="metadata" src={attachment.url} /> : attachment.url ? <a className="btn-secondary" href={attachment.url} download={attachment.name}>Открыть</a> : <span>Недоступно</span>}
                   </div>
                 ))}
               </div>

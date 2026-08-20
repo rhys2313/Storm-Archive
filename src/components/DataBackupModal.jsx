@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react';
-import { exportArchiveJSON, importArchiveJSON } from '../services/storage';
+import { exportArchiveBackup, importArchiveBackup } from '../services/storage';
 import { X, Download, Upload, Trash2, HardDrive, Check, AlertTriangle } from 'lucide-react';
 
 export default function DataBackupModal({ onClose, onDataReload, onClearArchive, totalEvents }) {
@@ -10,7 +10,7 @@ export default function DataBackupModal({ onClose, onDataReload, onClearArchive,
 
   const handleExport = async () => {
     try {
-      await exportArchiveJSON();
+      await exportArchiveBackup();
     } catch (err) {
       alert('Ошибка экспорта данных: ' + err.message);
     }
@@ -24,7 +24,7 @@ export default function DataBackupModal({ onClose, onDataReload, onClearArchive,
     setImportStatus('');
 
     try {
-      const importedCount = await importArchiveJSON(file);
+      const importedCount = await importArchiveBackup(file);
       setImportStatus(`Успешно импортировано наблюдений: ${importedCount}`);
       await onDataReload();
     } catch (err) {
@@ -49,15 +49,14 @@ export default function DataBackupModal({ onClose, onDataReload, onClearArchive,
 
         <div className="modal-body scrollable-body">
           <p className="backup-desc">
-            Все данные вашего Storm Archive сохраняются локально в вашем браузере (IndexedDB).
-            Вы можете экспортировать полную резервную копию в файл JSON или перенести архив на другое устройство.
+            Все данные Storm Archive сохраняются локально в IndexedDB. Полная резервная копия ZIP включает события и вложения; старый JSON по-прежнему можно импортировать.
           </p>
 
           <div className="backup-options-list">
             <div className="backup-card">
               <div className="backup-card-info">
-                <h4>Экспорт архива (JSON)</h4>
-                <p>Сохранить текущие наблюдения ({totalEvents}) в локальный файл резервной копии</p>
+                <h4>Полная резервная копия (ZIP)</h4>
+                <p>Сохранить наблюдения ({totalEvents}) вместе с фотографиями, видео и файлами</p>
               </div>
               <button className="btn-primary" onClick={handleExport} disabled={totalEvents === 0}>
                 <Download size={16} /> Экспорт
@@ -66,13 +65,13 @@ export default function DataBackupModal({ onClose, onDataReload, onClearArchive,
 
             <div className="backup-card">
               <div className="backup-card-info">
-                <h4>Имспорт архива (JSON)</h4>
-                <p>Восстановить или объединить данные из сохранённого JSON-файла</p>
+                <h4>Импорт архива</h4>
+                <p>Восстановить ZIP с вложениями или совместимый старый JSON</p>
               </div>
               <div>
                 <input 
                   type="file" 
-                  accept=".json" 
+                  accept=".zip,.json,application/zip,application/json"
                   ref={fileInputRef} 
                   onChange={handleFileChange} 
                   className="hidden-file-input" 

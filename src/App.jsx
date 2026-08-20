@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import Header from './components/Header';
 import MobileNav from './components/MobileNav';
 import FilterBar from './components/FilterBar';
@@ -12,12 +12,14 @@ import DataBackupModal from './components/DataBackupModal';
 import ConfirmModal from './components/ConfirmModal';
 import OfflineBanner from './components/OfflineBanner';
 
-import { getStoredEvents, saveEvent, deleteEvent, clearAllEvents } from './services/storage';
+import { getStoredEvents, saveEventWithAttachments, deleteEvent, clearAllEvents } from './services/storage';
+import { getAttachments, migrateLegacyBase64Events, requestPersistentStorage } from './services/attachmentStore';
 import { EVENT_TYPES, SEVERITY_LEVELS } from './types/storm';
 import { CloudLightning, Plus, Sparkles, HardDrive, RefreshCw } from 'lucide-react';
 
 export default function App() {
   const [events, setEvents] = useState([]);
+  const attachmentUrlsRef = useRef([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('events'); // 'events' | 'map' | 'gallery' | 'stats'
 
@@ -51,8 +53,40 @@ export default function App() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const data = await getStoredEvents();
-      setEvents(data);
+      const storedEvents = await getStoredEvents();
+      let data = storedEvents;
+      try {
+        data = (await migrateLegacyBase64Events(storedEvents)).events;
+      } catch (error) {
+        console.warn('Миграция старых вложений будет повторена при следующем запуске', error);
+      }
+      const attachmentIds = [...new Set(data.flatMap(event => (event.attachmentRefs || []).map(reference => reference.id)))];
+      let records = [];
+      try {
+        records = await getAttachments(attachmentIds);
+      } catch (error) {
+        console.warn('Локальные вложения недоступны в этом браузере', error);
+      }
+      const recordsById = new Map(records.map(record => [record.id, record]));
+      attachmentUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
+      attachmentUrlsRef.current = [];
+      const viewEvents = data.map(event => {
+        const attachments = (event.attachmentRefs || []).map(reference => {
+          const record = recordsById.get(reference.id);
+          if (!record) return { ...reference, unavailable: true };
+          const url = URL.createObjectURL(record.blob);
+          attachmentUrlsRef.current.push(url);
+          return { ...record, url };
+        });
+        const photoAttachments = attachments.filter(attachment => attachment.kind === 'photo' && attachment.url).map(attachment => ({
+          id: attachment.id,
+          url: attachment.url,
+          caption: attachment.metadata?.caption || '',
+          exif: attachment.metadata?.exif || {}
+        }));
+        return { ...event, attachments, photos: [...(event.photos || []), ...photoAttachments] };
+      });
+      setEvents(viewEvents);
     } catch (err) {
       console.error('Failed to load events:', err);
     } finally {
@@ -62,6 +96,8 @@ export default function App() {
 
   useEffect(() => {
     loadData();
+    requestPersistentStorage();
+    return () => attachmentUrlsRef.current.forEach(url => URL.revokeObjectURL(url));
   }, []);
 
   // Filter & Sort Logic
@@ -115,14 +151,15 @@ export default function App() {
     setIsFormModalOpen(true);
   };
 
-  const handleSaveEvent = async (eventData) => {
+  const handleSaveEvent = async (eventData, attachmentChanges) => {
     try {
-      await saveEvent(eventData);
+      await saveEventWithAttachments(eventData, attachmentChanges);
       await loadData();
       setIsFormModalOpen(false);
       setEventToEdit(null);
     } catch (err) {
       alert('Ошибка при сохранении события: ' + err.message);
+      throw err;
     }
   };
 

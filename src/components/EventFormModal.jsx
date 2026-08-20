@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { EVENT_TYPES, SEVERITY_LEVELS, HAZARDS } from '../types/storm';
-import { parsePhotoMetadata } from '../services/exif';
-import { X, Upload, Trash2, Camera, MapPin, Sparkles, AlertCircle } from 'lucide-react';
+import { makeAttachmentRef, prepareAttachments, getStorageEstimate } from '../services/attachmentStore';
+import { X, Upload, Trash2, Camera, MapPin, Sparkles, FileText, Video } from 'lucide-react';
 
 export default function EventFormModal({ eventToEdit, onClose, onSave }) {
   const [title, setTitle] = useState('');
@@ -14,7 +14,9 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
   const [selectedHazards, setSelectedHazards] = useState([]);
   const [notes, setNotes] = useState('');
   const [tagsInput, setTagsInput] = useState('');
-  const [photos, setPhotos] = useState([]);
+  const [attachmentRefs, setAttachmentRefs] = useState([]);
+  const [newAttachments, setNewAttachments] = useState([]);
+  const [attachmentIdsToDelete, setAttachmentIdsToDelete] = useState([]);
 
   // Meteorological parameters
   const [cape, setCape] = useState('');
@@ -27,6 +29,10 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
 
   const [exifNotification, setExifNotification] = useState('');
   const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [storageInfo, setStorageInfo] = useState(null);
+  const draftEventId = useMemo(() => eventToEdit?.id || `evt_${Date.now()}`, [eventToEdit?.id]);
+  const previewUrlsRef = useRef(new Set());
 
   useEffect(() => {
     if (eventToEdit) {
@@ -40,7 +46,9 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
       setSelectedHazards(eventToEdit.hazards || []);
       setNotes(eventToEdit.notes || '');
       setTagsInput(eventToEdit.tags ? eventToEdit.tags.join(', ') : '');
-      setPhotos(eventToEdit.photos || []);
+      setAttachmentRefs(eventToEdit.attachmentRefs || []);
+      setNewAttachments([]);
+      setAttachmentIdsToDelete([]);
 
       if (eventToEdit.parameters) {
         setCape(eventToEdit.parameters.cape || '');
@@ -56,8 +64,17 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
       const now = new Date();
       now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
       setDate(now.toISOString().slice(0, 16));
+      setAttachmentRefs([]);
+      setNewAttachments([]);
+      setAttachmentIdsToDelete([]);
     }
   }, [eventToEdit]);
+
+  useEffect(() => {
+    getStorageEstimate().then(setStorageInfo).catch(() => setStorageInfo(null));
+  }, []);
+
+  useEffect(() => () => previewUrlsRef.current.forEach(url => URL.revokeObjectURL(url)), []);
 
   const handleHazardToggle = (hazardKey) => {
     setSelectedHazards(prev => 
@@ -65,71 +82,69 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
     );
   };
 
-  const handlePhotoUpload = async (e) => {
-    const files = Array.from(e.target.files);
+  const handleAttachmentUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
     if (!files.length) return;
 
     setIsProcessingPhoto(true);
     setExifNotification('');
 
-    const newPhotos = [];
-    let autoDate = null;
-    let autoLat = null;
-    let autoLng = null;
-
-    for (const file of files) {
-      const meta = await parsePhotoMetadata(file);
-
-      if (meta.date && !date) autoDate = meta.date;
-      if (meta.lat && !latitude) autoLat = meta.lat;
-      if (meta.lng && !longitude) autoLng = meta.lng;
-
-      const reader = new FileReader();
-      const photoPromise = new Promise((resolve) => {
-        reader.onload = (event) => {
-          resolve({
-            id: 'photo_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-            url: event.target.result,
-            caption: '',
-            exif: meta.exif || {}
-          });
-        };
-        reader.readAsDataURL(file);
-      });
-
-      const photoObj = await photoPromise;
-      newPhotos.push(photoObj);
-    }
-
-    setPhotos(prev => [...prev, ...newPhotos]);
-    setIsProcessingPhoto(false);
-
-    let notices = [];
-    if (autoDate) {
-      setDate(autoDate);
-      notices.push('дату сёмки');
-    }
-    if (autoLat && autoLng) {
-      setLatitude(String(autoLat));
-      setLongitude(String(autoLng));
-      notices.push('GPS координаты');
-    }
-
-    if (notices.length > 0) {
-      setExifNotification(`Извлечены данные EXIF: ${notices.join(', ')}.`);
-      setTimeout(() => setExifNotification(''), 5000);
+    try {
+      const prepared = await prepareAttachments(files, draftEventId);
+      const withPreviews = prepared.map(attachment => ({
+        ...attachment,
+        previewUrl: attachment.kind === 'photo' ? URL.createObjectURL(attachment.blob) : null
+      }));
+      withPreviews.forEach(attachment => { if (attachment.previewUrl) previewUrlsRef.current.add(attachment.previewUrl); });
+      setNewAttachments(prev => [...prev, ...withPreviews]);
+      const firstPhotoWithDate = prepared.find(attachment => attachment.kind === 'photo' && attachment.metadata?.capturedAt);
+      const firstPhotoWithCoords = prepared.find(attachment => attachment.kind === 'photo' && Number.isFinite(attachment.metadata?.latitude) && Number.isFinite(attachment.metadata?.longitude));
+      const notices = [];
+      if (!date && firstPhotoWithDate) {
+        setDate(firstPhotoWithDate.metadata.capturedAt);
+        notices.push('дату съёмки');
+      }
+      if (!latitude && !longitude && firstPhotoWithCoords) {
+        setLatitude(String(firstPhotoWithCoords.metadata.latitude));
+        setLongitude(String(firstPhotoWithCoords.metadata.longitude));
+        notices.push('GPS координаты');
+      }
+      if (notices.length) setExifNotification(`Извлечены данные EXIF из первой подходящей фотографии: ${notices.join(', ')}.`);
+      getStorageEstimate().then(setStorageInfo).catch(() => {});
+    } catch (error) {
+      setExifNotification(error.message || 'Не удалось подготовить вложения.');
+    } finally {
+      setIsProcessingPhoto(false);
     }
   };
 
-  const handleRemovePhoto = (photoId) => {
-    setPhotos(prev => prev.filter(p => p.id !== photoId));
+  const handleRemoveAttachment = (attachmentId) => {
+    const pending = newAttachments.find(attachment => attachment.id === attachmentId);
+    if (pending) {
+      if (pending.previewUrl) {
+        URL.revokeObjectURL(pending.previewUrl);
+        previewUrlsRef.current.delete(pending.previewUrl);
+      }
+      setNewAttachments(prev => prev.filter(attachment => attachment.id !== attachmentId));
+      return;
+    }
+    setAttachmentRefs(prev => prev.filter(reference => reference.id !== attachmentId));
+    setAttachmentIdsToDelete(prev => [...new Set([...prev, attachmentId])]);
   };
 
-  const handlePhotoCaptionChange = (photoId, caption) => {
-    setPhotos(prev => prev.map(p => p.id === photoId ? { ...p, caption } : p));
+  const handleCaptionChange = (attachmentId, caption) => {
+    setAttachmentRefs(prev => prev.map(reference => reference.id === attachmentId ? { ...reference, metadata: { ...reference.metadata, caption } } : reference));
+    setNewAttachments(prev => prev.map(attachment => attachment.id === attachmentId ? { ...attachment, metadata: { ...attachment.metadata, caption } } : attachment));
   };
 
-  const handleSubmit = (e) => {
+  const savedAttachments = attachmentRefs.map(reference => {
+    const loaded = eventToEdit?.attachments?.find(attachment => attachment.id === reference.id);
+    return { ...loaded, ...reference, metadata: reference.metadata || loaded?.metadata || {} };
+  });
+  const allAttachments = [...savedAttachments, ...newAttachments];
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!title.trim()) {
       alert('Пожалуйста, укажите название явления');
@@ -142,7 +157,7 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
       .filter(Boolean);
 
     const eventData = {
-      id: eventToEdit ? eventToEdit.id : 'evt_' + Date.now(),
+      id: draftEventId,
       title: title.trim(),
       date,
       eventType,
@@ -162,11 +177,17 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
       },
       notes: notes.trim(),
       tags: tagsArray,
-      photos,
+      attachmentRefs: [...attachmentRefs, ...newAttachments.map(makeAttachmentRef)],
       createdAt: eventToEdit ? eventToEdit.createdAt : new Date().toISOString()
     };
-
-    onSave(eventData);
+    try {
+      setIsSaving(true);
+      await onSave(eventData, { newAttachments, attachmentIdsToDelete });
+    } catch (error) {
+      setExifNotification(error.message || 'Не удалось сохранить событие.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -383,46 +404,49 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
             </div>
           </div>
 
-          {/* Photo upload dropzone */}
+          {/* Local-first attachment upload */}
           <div className="form-group">
-            <label className="form-label">Фотоснимки наблюдения (извлечение EXIF метаданных)</label>
+            <label className="form-label">Вложения наблюдения (EXIF для фотографий)</label>
 
             <div className="upload-dropzone">
-              <input 
-                type="file" 
-                accept="image/*" 
-                multiple 
-                onChange={handlePhotoUpload} 
-                id="photo-upload-input" 
-                className="hidden-file-input"
-              />
-              <label htmlFor="photo-upload-input" className="dropzone-label">
+                <input
+                  type="file"
+                  accept="*/*"
+                  multiple
+                  onChange={handleAttachmentUpload}
+                  id="attachment-upload-input"
+                  className="hidden-file-input"
+                />
+              <label htmlFor="attachment-upload-input" className="dropzone-label">
                 <Upload size={24} className="upload-icon" />
-                <span>Загрузить снимки наблюдения</span>
+                <span>Загрузить материалы</span>
                 <span className="dropzone-sub">
-                  {isProcessingPhoto ? 'Обработка и чтение EXIF...' : 'JPG, PNG, WebP. Автоматическое чтение даты сёмки и GPS'}
+                  {isProcessingPhoto ? 'Обработка и чтение EXIF...' : 'Фото, видео, PDF, TXT, ZIP и другие файлы'}
                 </span>
               </label>
             </div>
 
-            {/* Photos Preview list */}
-            {photos.length > 0 && (
+            {storageInfo?.quota && (
+              <p className="dropzone-sub">Локальное хранилище: {(storageInfo.usage / 1024 / 1024).toFixed(1)} из {(storageInfo.quota / 1024 / 1024).toFixed(0)} МБ</p>
+            )}
+
+            {allAttachments.length > 0 && (
               <div className="form-photos-list">
-                {photos.map((photo) => (
-                  <div key={photo.id} className="form-photo-row">
-                    <img src={photo.url} alt="Preview" className="form-photo-thumb" />
-                    <input 
+                {allAttachments.map((attachment) => (
+                  <div key={attachment.id} className="form-photo-row">
+                    {attachment.kind === 'photo' && (attachment.previewUrl || attachment.url) ? <img src={attachment.previewUrl || attachment.url} alt="Preview" className="form-photo-thumb" /> : attachment.kind === 'video' ? <Video size={22} /> : <FileText size={22} />}
+                    {attachment.kind === 'photo' ? <input
                       type="text" 
                       placeholder="Подпись к фото..." 
-                      value={photo.caption || ''} 
-                      onChange={(e) => handlePhotoCaptionChange(photo.id, e.target.value)} 
+                      value={attachment.metadata?.caption || ''}
+                      onChange={(e) => handleCaptionChange(attachment.id, e.target.value)}
                       className="form-input caption-input"
-                    />
+                    /> : <span className="caption-input">{attachment.name} · {(attachment.size / 1024 / 1024).toFixed(1)} МБ</span>}
                     <button 
                       type="button" 
                       className="icon-action-btn delete" 
-                      onClick={() => handleRemovePhoto(photo.id)}
-                      title="Удалить фото"
+                      onClick={() => handleRemoveAttachment(attachment.id)}
+                      title="Удалить вложение"
                     >
                       <Trash2 size={16} />
                     </button>
@@ -460,8 +484,8 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
             <button type="button" className="btn-secondary" onClick={onClose}>
               Отмена
             </button>
-            <button type="submit" className="btn-primary">
-              {eventToEdit ? 'Сохранить изменения' : 'Сохранить в архив'}
+            <button type="submit" className="btn-primary" disabled={isSaving || isProcessingPhoto}>
+              {isSaving ? 'Сохранение...' : eventToEdit ? 'Сохранить изменения' : 'Сохранить в архив'}
             </button>
           </div>
         </form>
