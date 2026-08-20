@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { EVENT_TYPES } from '../types/storm';
+import { EVENT_CATEGORIES, getClassificationLabel, getEventClassification, getEventTypeInfo } from '../types/storm';
 import { Image as ImageIcon, Camera, Calendar, MapPin, X, ExternalLink, Filter } from 'lucide-react';
 
 export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
@@ -17,7 +17,8 @@ export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
           eventTitle: evt.title,
           eventDate: evt.date,
           eventLocation: evt.location,
-          eventType: evt.eventType,
+          category: getEventClassification(evt).category,
+          classificationLabel: getClassificationLabel(evt),
           photoIndex: idx,
           fullEvent: evt
         });
@@ -26,7 +27,7 @@ export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
   });
 
   const filteredPhotos = typeFilter 
-    ? allPhotos.filter(p => p.eventType === typeFilter)
+    ? allPhotos.filter(p => p.category === typeFilter)
     : allPhotos;
 
   return (
@@ -44,8 +45,8 @@ export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
               onChange={(e) => setTypeFilter(e.target.value)}
               className="filter-select"
             >
-              <option value="">Все категории</option>
-              {Object.values(EVENT_TYPES).map(t => (
+              <option value="">Все группы</option>
+              {Object.values(EVENT_CATEGORIES).map(t => (
                 <option key={t.id} value={t.id}>{t.label}</option>
               ))}
             </select>
@@ -74,7 +75,7 @@ export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
       ) : (
         <div className="gallery-grid">
           {filteredPhotos.map((photo, i) => {
-            const eventType = EVENT_TYPES[photo.eventType] || EVENT_TYPES.other;
+            const eventType = getEventTypeInfo(photo.fullEvent);
             const formattedDate = photo.eventDate ? new Date(photo.eventDate).toLocaleDateString('ru-RU') : '';
 
             return (
@@ -82,7 +83,7 @@ export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
                 <div className="gallery-image-wrapper">
                   <img src={photo.url} alt={photo.caption || photo.eventTitle} className="gallery-img" loading="lazy" />
                   <div className="gallery-badge" style={{ backgroundColor: eventType.color }}>
-                    {eventType.label}
+                    {photo.classificationLabel}
                   </div>
                 </div>
 

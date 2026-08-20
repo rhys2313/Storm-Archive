@@ -13,7 +13,7 @@ import ConfirmModal from './components/ConfirmModal';
 import OfflineBanner from './components/OfflineBanner';
 
 import { getStoredEvents, saveEvent, deleteEvent, clearAllEvents } from './services/storage';
-import { EVENT_TYPES, SEVERITY_LEVELS } from './types/storm';
+import { getClassificationSearchText, getEventClassification } from './types/storm';
 import { CloudLightning, Plus, Sparkles, HardDrive, RefreshCw } from 'lucide-react';
 
 export default function App() {
@@ -23,7 +23,8 @@ export default function App() {
 
   // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
-  const [typeFilter, setTypeFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [subtypeFilter, setSubtypeFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
   const [sortBy, setSortBy] = useState('newest');
 
@@ -75,11 +76,14 @@ export default function App() {
           const matchLoc = evt.location?.toLowerCase().includes(q);
           const matchNotes = evt.notes?.toLowerCase().includes(q);
           const matchTags = evt.tags?.some(t => t.toLowerCase().includes(q));
-          if (!matchTitle && !matchLoc && !matchNotes && !matchTags) return false;
+          const matchClassification = getClassificationSearchText(evt).includes(q);
+          if (!matchTitle && !matchLoc && !matchNotes && !matchTags && !matchClassification) return false;
         }
 
-        // Type filter
-        if (typeFilter && evt.eventType !== typeFilter) return false;
+        // Classification filters
+        const classification = getEventClassification(evt);
+        if (categoryFilter && classification.category !== categoryFilter) return false;
+        if (subtypeFilter && classification.subtype !== subtypeFilter) return false;
 
         // Severity filter
         if (severityFilter && evt.severity !== severityFilter) return false;
@@ -102,7 +106,7 @@ export default function App() {
         }
         return 0;
       });
-  }, [events, searchQuery, typeFilter, severityFilter, sortBy]);
+  }, [events, searchQuery, categoryFilter, subtypeFilter, severityFilter, sortBy]);
 
   const handleOpenAddModal = () => {
     setEventToEdit(null);
@@ -150,7 +154,8 @@ export default function App() {
 
   const handleResetFilters = () => {
     setSearchQuery('');
-    setTypeFilter('');
+    setCategoryFilter('');
+    setSubtypeFilter('');
     setSeverityFilter('');
     setSortBy('newest');
   };
@@ -174,8 +179,10 @@ export default function App() {
             <FilterBar 
               searchQuery={searchQuery}
               setSearchQuery={setSearchQuery}
-              typeFilter={typeFilter}
-              setTypeFilter={setTypeFilter}
+              categoryFilter={categoryFilter}
+              setCategoryFilter={setCategoryFilter}
+              subtypeFilter={subtypeFilter}
+              setSubtypeFilter={setSubtypeFilter}
               severityFilter={severityFilter}
               setSeverityFilter={setSeverityFilter}
               sortBy={sortBy}

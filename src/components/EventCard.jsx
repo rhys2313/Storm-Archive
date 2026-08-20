@@ -1,9 +1,11 @@
 import React from 'react';
-import { EVENT_TYPES, SEVERITY_LEVELS, HAZARDS } from '../types/storm';
+import { SEVERITY_LEVELS, HAZARDS, getClassificationAttributeLabels, getClassificationLabel, getEventTypeInfo } from '../types/storm';
 import { Calendar, MapPin, Tag, Image as ImageIcon, Zap, Eye, Edit2, Trash2, Gauge, Wind, Thermometer } from 'lucide-react';
 
 export default function EventCard({ event, onView, onEdit, onDelete }) {
-  const eventType = EVENT_TYPES[event.eventType] || EVENT_TYPES.other;
+  const eventType = getEventTypeInfo(event);
+  const classificationLabel = getClassificationLabel(event);
+  const classificationAttributes = getClassificationAttributeLabels(event);
   const severity = SEVERITY_LEVELS[event.severity] || SEVERITY_LEVELS.moderate;
   const hasPhotos = event.photos && event.photos.length > 0;
 
@@ -43,7 +45,7 @@ export default function EventCard({ event, onView, onEdit, onDelete }) {
               style={{ backgroundColor: `${eventType.color}20`, color: eventType.color, borderColor: `${eventType.color}40` }}
             >
               <span className="badge-dot" style={{ backgroundColor: eventType.color }}></span>
-              {eventType.label}
+              {classificationLabel}
             </span>
 
             <span className={`severity-badge ${severity.badgeClass}`}>
@@ -63,6 +65,10 @@ export default function EventCard({ event, onView, onEdit, onDelete }) {
             </button>
           </div>
         </div>
+
+        {classificationAttributes.length > 0 && (
+          <div className="classification-summary">{classificationAttributes.join(' · ')}</div>
+        )}
 
         <h3 className="card-title" onClick={() => onView(event)}>
           {event.title}

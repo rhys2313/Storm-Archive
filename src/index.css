@@ -595,6 +595,13 @@ input, select, textarea {
   margin-top: auto;
 }
 
+.classification-summary {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  margin-bottom: 8px;
+}
+
 .tag-item {
   font-size: 11px;
   color: var(--text-muted);
@@ -787,6 +794,12 @@ input, select, textarea {
   color: var(--text-secondary);
 }
 
+.form-help-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
 .req {
   color: var(--accent-red);
 }
@@ -976,6 +989,32 @@ input, select, textarea {
 
 .detail-section {
   margin-bottom: 20px;
+}
+
+.classification-detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background-color: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.classification-main {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.classification-attribute {
+  font-size: 11px;
+  color: var(--accent-cyan);
+  background-color: rgba(34, 211, 238, 0.08);
+  border: 1px solid rgba(34, 211, 238, 0.2);
+  border-radius: var(--radius-sm);
+  padding: 3px 7px;
 }
 
 .section-subtitle {

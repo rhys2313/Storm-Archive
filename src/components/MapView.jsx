@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { EVENT_TYPES } from '../types/storm';
+import { getClassificationLabel, getEventTypeInfo } from '../types/storm';
 import { MapPin, Navigation, Info } from 'lucide-react';
 
 export default function MapView({ events, onViewEvent, onOpenAddModal }) {
@@ -41,7 +41,8 @@ export default function MapView({ events, onViewEvent, onOpenAddModal }) {
       const bounds = L.latLngBounds();
 
       eventsWithCoords.forEach(evt => {
-        const eventType = EVENT_TYPES[evt.eventType] || EVENT_TYPES.other;
+        const eventType = getEventTypeInfo(evt);
+        const classificationLabel = getClassificationLabel(evt);
         const pinColor = eventType.color || '#38bdf8';
 
         // Custom Leaflet DivIcon with colored pin
@@ -59,7 +60,7 @@ export default function MapView({ events, onViewEvent, onOpenAddModal }) {
         popupContent.className = 'map-popup-card';
         popupContent.innerHTML = `
           <div className="popup-type" style="color: ${pinColor}; font-weight: 600; font-size: 11px; text-transform: uppercase;">
-            ${eventType.label}
+            ${classificationLabel}
           </div>
           <h4 style="margin: 4px 0; font-size: 14px; color: #f1f5f9;">${evt.title}</h4>
           <div style="font-size: 12px; color: #94a3b8; margin-bottom: 8px;">
