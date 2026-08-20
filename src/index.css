@@ -926,6 +926,23 @@ input, select, textarea {
   flex: 1;
 }
 
+.caption-input strong,
+.caption-input span {
+  display: block;
+}
+
+.caption-input span {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.form-photo-row video {
+  width: 160px;
+  max-height: 70px;
+  border-radius: var(--radius-sm);
+}
+
 .form-actions-row {
   display: flex;
   justify-content: flex-end;
