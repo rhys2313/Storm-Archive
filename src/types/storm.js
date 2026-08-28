@@ -43,9 +43,6 @@ export const SQUALL_INTENSITIES = [UNSPECIFIED, { id: 'moderate', label: 'Уме
 export const TORNADO_ORIGINS = [UNSPECIFIED, { id: 'mesocyclonic', label: 'Мезоциклонное' }, { id: 'non_mesocyclonic', label: 'Немезоциклонное' }];
 export const TORNADO_INTENSITIES = [{ id: 'ifu', label: 'IFU / не оценён' }, ...['IF0', 'IF0.5', 'IF1', 'IF1.5', 'IF2', 'IF2.5', 'IF3', 'IF4', 'IF5'].map(id => ({ id, label: id }))];
 
-// Kept for compatibility with existing imports and external backups.
-export const EVENT_TYPES = EVENT_CATEGORIES;
-
 const LEGACY_EVENT_TYPE_MAP = {
   thunderstorm: { category: 'thunderstorm', subtype: 'unspecified' }, supercell: { category: 'supercell', subtype: 'unspecified' }, mcs: { category: 'mcs', subtype: 'unspecified' }, shelf_cloud: { category: 'shelf_cloud', subtype: 'unspecified' }, hail: { category: 'hail', subtype: 'unspecified' }, squall: { category: 'squall', subtype: 'unspecified' }, tornadic: { category: 'tornadic', subtype: 'unspecified' }, tornado: { category: 'tornadic', subtype: 'tornado' }, funnel_cloud: { category: 'tornadic', subtype: 'funnel_cloud' }, optical: { category: 'optical', subtype: 'unspecified' }, halo: { category: 'optical', subtype: 'unspecified' }, rare_clouds: { category: 'rare_clouds', subtype: 'unspecified' }, fog: { category: 'fog', subtype: 'unspecified' }, aurora: { category: 'aurora', subtype: 'unspecified' }, other: { category: 'other', subtype: 'unspecified' }
 };
@@ -116,13 +113,4 @@ export const SEVERITY_LEVELS = {
   moderate: { id: 'moderate', label: 'Умеренное', color: '#38bdf8', badgeClass: 'severity-moderate' },
   severe: { id: 'severe', label: 'Сильное', color: '#f59e0b', badgeClass: 'severity-severe' },
   extreme: { id: 'extreme', label: 'Опасное (ОЯ)', color: '#ef4444', badgeClass: 'severity-extreme' }
-};
-
-export const HAZARDS = {
-  lightning: { id: 'lightning', label: 'Молнии (CG)', icon: 'Zap' },
-  hail: { id: 'hail', label: 'Град', icon: 'Circle' },
-  heavy_rain: { id: 'heavy_rain', label: 'Сильный ливень', icon: 'CloudRain' },
-  damaging_wind: { id: 'damaging_wind', label: 'Шквал / Ветер', icon: 'Wind' },
-  dust: { id: 'dust', label: 'Пылевая буря', icon: 'Sun' },
-  flooding: { id: 'flooding', label: 'Затопление', icon: 'Droplets' }
 };

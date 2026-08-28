@@ -1,235 +1,121 @@
-import React from 'react';
-import { EVENT_CATEGORIES, SEVERITY_LEVELS, HAZARDS, getEventClassification } from '../types/storm';
-import { BarChart2, Zap, Calendar, MapPin, Gauge, Wind, Thermometer, ShieldAlert, Sparkles, PieChart } from 'lucide-react';
+import React, { useMemo } from 'react';
+import { EVENT_CATEGORIES, SEVERITY_LEVELS } from '../types/storm';
+import { computeArchiveStats } from '../services/events';
+import { BarChart2, Camera, MapPin, ShieldAlert, PieChart, CalendarRange, CloudLightning } from 'lucide-react';
+
+const MONTH_LABELS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
+
+const percent = (count, total) => (total > 0 ? Math.round((count / total) * 100) : 0);
+
+const BarRow = ({ label, color, count, total }) => (
+  <div className="bar-item">
+    <div className="bar-label-row">
+      <span className="bar-name" style={{ color }}>{label}</span>
+      <span className="bar-val">{count} · {percent(count, total)}%</span>
+    </div>
+    <div className="bar-track">
+      <div className="bar-fill" style={{ width: `${percent(count, total)}%`, backgroundColor: color }} />
+    </div>
+  </div>
+);
 
 export default function StatsView({ events, onOpenAddModal }) {
-  if (!events || events.length === 0) {
+  const stats = useMemo(() => computeArchiveStats(events), [events]);
+
+  if (stats.total === 0) {
     return (
       <div className="stats-container">
         <div className="empty-state-card">
-          <div className="empty-icon-wrapper">
-            <BarChart2 size={32} />
-          </div>
+          <div className="empty-icon-wrapper"><BarChart2 size={32} aria-hidden="true" /></div>
           <h3>Статистика пока недоступна</h3>
           <p>
-            В архиве ещё нет сохранённых метеонаблюдений. Добавьте ваши первые записи, чтобы увидеть аналитику,
-            распределение явлений по категориям, силе и сезонам.
+            В архиве ещё нет сохранённых наблюдений. Добавьте первые записи, чтобы увидеть распределение
+            явлений по группам, интенсивности и сезонам.
           </p>
-          <button className="btn-primary" onClick={onOpenAddModal}>
-            Добавить первое наблюдение
-          </button>
+          <button type="button" className="btn-primary" onClick={onOpenAddModal}>Добавить наблюдение</button>
         </div>
       </div>
     );
   }
 
-  const totalCount = events.length;
-  const withPhotosCount = events.filter(e => e.photos && e.photos.length > 0).length;
-  const withCoordsCount = events.filter(e => e.latitude && e.longitude).length;
-  const severeCount = events.filter(e => e.severity === 'severe' || e.severity === 'extreme').length;
+  const categoryRows = Object.entries(stats.categoryCounts)
+    .filter(([, count]) => count > 0)
+    .sort((a, b) => b[1] - a[1]);
 
-  // Breakdown by top-level classification group
-  const typeCounts = {};
-  Object.keys(EVENT_CATEGORIES).forEach(k => { typeCounts[k] = 0; });
-  events.forEach(e => {
-    const { category } = getEventClassification(e);
-    if (typeCounts[category] !== undefined) {
-      typeCounts[category]++;
-    } else {
-      typeCounts.other++;
-    }
-  });
+  const peakMonth = Math.max(...stats.monthCounts);
 
-  // Breakdown by Severity
-  const severityCounts = { low: 0, moderate: 0, severe: 0, extreme: 0 };
-  events.forEach(e => {
-    if (severityCounts[e.severity] !== undefined) {
-      severityCounts[e.severity]++;
-    }
-  });
-
-  // Breakdown by Hazards
-  const hazardCounts = {};
-  Object.keys(HAZARDS).forEach(k => { hazardCounts[k] = 0; });
-  events.forEach(e => {
-    if (e.hazards && Array.isArray(e.hazards)) {
-      e.hazards.forEach(h => {
-        if (hazardCounts[h] !== undefined) hazardCounts[h]++;
-      });
-    }
-  });
-
-  // Average parameters
-  const capes = events.map(e => parseFloat(e.parameters?.cape)).filter(n => !isNaN(n));
-  const avgCape = capes.length > 0 ? Math.round(capes.reduce((a, b) => a + b, 0) / capes.length) : null;
-
-  const winds = events.map(e => parseFloat(e.parameters?.windSpeed)).filter(n => !isNaN(n));
-  const avgWind = winds.length > 0 ? (winds.reduce((a, b) => a + b, 0) / winds.length).toFixed(1) : null;
-
-  const temps = events.map(e => parseFloat(e.parameters?.temperature)).filter(n => !isNaN(n));
-  const avgTemp = temps.length > 0 ? (temps.reduce((a, b) => a + b, 0) / temps.length).toFixed(1) : null;
+  const summaryCards = [
+    { icon: CloudLightning, tone: 'blue', value: stats.total, label: 'Всего наблюдений' },
+    { icon: ShieldAlert, tone: 'amber', value: stats.severeCount, label: 'Сильных и опасных (ОЯ)' },
+    { icon: MapPin, tone: 'emerald', value: stats.withCoords, label: 'С координатами' },
+    { icon: Camera, tone: 'purple', value: stats.photoCount, label: `Снимков (в ${stats.withPhotos} записях)` }
+  ];
 
   return (
     <div className="stats-container">
-      {/* Top Cards Summary */}
       <div className="stats-summary-grid">
-        <div className="stat-card">
-          <div className="stat-icon-wrapper blue">
-            <Calendar size={20} />
+        {summaryCards.map(({ icon: Icon, tone, value, label }) => (
+          <div key={label} className="stat-card">
+            <div className={`stat-icon-wrapper ${tone}`}><Icon size={20} aria-hidden="true" /></div>
+            <div className="stat-card-body">
+              <span className="stat-value">{value}</span>
+              <span className="stat-label">{label}</span>
+            </div>
           </div>
-          <div>
-            <span className="stat-value">{totalCount}</span>
-            <span className="stat-label">Всего наблюдений</span>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon-wrapper amber">
-            <ShieldAlert size={20} />
-          </div>
-          <div>
-            <span className="stat-value">{severeCount}</span>
-            <span className="stat-label">Сильных / Опасных (ОЯ)</span>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon-wrapper emerald">
-            <MapPin size={20} />
-          </div>
-          <div>
-            <span className="stat-value">{withCoordsCount}</span>
-            <span className="stat-label">Отмечено на карте</span>
-          </div>
-        </div>
-
-        <div className="stat-card">
-          <div className="stat-icon-wrapper purple">
-            <Sparkles size={20} />
-          </div>
-          <div>
-            <span className="stat-value">{withPhotosCount}</span>
-            <span className="stat-label">С фотоснимками</span>
-          </div>
-        </div>
+        ))}
       </div>
 
       <div className="stats-charts-grid">
-        {/* Distribution by Event Type */}
-        <div className="chart-box">
-          <h3 className="chart-title">
-            <PieChart size={18} /> Распределение по группам метеоявлений
-          </h3>
+        <section className="chart-box">
+          <h3 className="chart-title"><PieChart size={18} aria-hidden="true" /> Распределение по группам явлений</h3>
           <div className="bar-list">
-            {Object.entries(typeCounts)
-              .filter(([_, count]) => count > 0)
-              .map(([typeKey, count]) => {
-                const typeInfo = EVENT_CATEGORIES[typeKey] || EVENT_CATEGORIES.other;
-                const percentage = Math.round((count / totalCount) * 100);
-                return (
-                  <div key={typeKey} className="bar-item">
-                    <div className="bar-label-row">
-                      <span className="bar-name" style={{ color: typeInfo.color }}>
-                        {typeInfo.label}
-                      </span>
-                      <span className="bar-val">{count} ({percentage}%)</span>
-                    </div>
-                    <div className="bar-track">
-                      <div 
-                        className="bar-fill" 
-                        style={{ width: `${percentage}%`, backgroundColor: typeInfo.color }}
-                      ></div>
-                    </div>
-                  </div>
-                );
-              })}
-          </div>
-        </div>
-
-        {/* Distribution by Severity Level */}
-        <div className="chart-box">
-          <h3 className="chart-title">
-            <ShieldAlert size={18} /> Распределение по интенсивности
-          </h3>
-          <div className="bar-list">
-            {Object.entries(severityCounts).map(([sevKey, count]) => {
-              const sevInfo = SEVERITY_LEVELS[sevKey];
-              if (!sevInfo) return null;
-              const percentage = totalCount > 0 ? Math.round((count / totalCount) * 100) : 0;
-              return (
-                <div key={sevKey} className="bar-item">
-                  <div className="bar-label-row">
-                    <span className="bar-name" style={{ color: sevInfo.color }}>
-                      {sevInfo.label}
-                    </span>
-                    <span className="bar-val">{count} ({percentage}%)</span>
-                  </div>
-                  <div className="bar-track">
-                    <div 
-                      className="bar-fill" 
-                      style={{ width: `${percentage}%`, backgroundColor: sevInfo.color }}
-                    ></div>
-                  </div>
-                </div>
-              );
+            {categoryRows.map(([key, count]) => {
+              const info = EVENT_CATEGORIES[key] || EVENT_CATEGORIES.other;
+              return <BarRow key={key} label={info.label} color={info.color} count={count} total={stats.total} />;
             })}
           </div>
-        </div>
+        </section>
 
-        {/* Hazards occurrences */}
-        <div className="chart-box span-full">
-          <h3 className="chart-title">
-            <Zap size={18} /> Частота сопутствующих опасных факторов
-          </h3>
-          <div className="hazards-stats-grid">
-            {Object.entries(hazardCounts).map(([hKey, count]) => {
-              const hazard = HAZARDS[hKey];
-              if (!hazard) return null;
-              return (
-                <div key={hKey} className="hazard-stat-pill">
-                  <span className="h-stat-name">{hazard.label}</span>
-                  <span className="h-stat-count">{count}</span>
-                </div>
-              );
-            })}
+        <section className="chart-box">
+          <h3 className="chart-title"><ShieldAlert size={18} aria-hidden="true" /> Распределение по интенсивности</h3>
+          <div className="bar-list">
+            {Object.values(SEVERITY_LEVELS).map(level => (
+              <BarRow
+                key={level.id}
+                label={level.label}
+                color={level.color}
+                count={stats.severityCounts[level.id] || 0}
+                total={stats.total}
+              />
+            ))}
           </div>
-        </div>
+        </section>
 
-        {/* Averages if params recorded */}
-        {(avgCape !== null || avgWind !== null || avgTemp !== null) && (
-          <div className="chart-box span-full">
-            <h3 className="chart-title">Средние измеренные параметры</h3>
-            <div className="averages-row">
-              {avgCape !== null && (
-                <div className="avg-metric-card">
-                  <Gauge size={20} className="avg-icon" />
-                  <div>
-                    <span className="avg-val">{avgCape} J/kg</span>
-                    <span className="avg-lbl">Средний CAPE</span>
-                  </div>
+        <section className="chart-box span-full">
+          <h3 className="chart-title"><CalendarRange size={18} aria-hidden="true" /> Сезонное распределение</h3>
+          <div className="month-chart" role="img" aria-label="Количество наблюдений по месяцам">
+            {stats.monthCounts.map((count, index) => (
+              <div key={MONTH_LABELS[index]} className="month-column" title={`${MONTH_LABELS[index]}: ${count}`}>
+                <span className="month-count">{count || ''}</span>
+                <div className="month-bar-track">
+                  <div
+                    className="month-bar-fill"
+                    style={{ height: peakMonth > 0 ? `${Math.round((count / peakMonth) * 100)}%` : '0%' }}
+                  />
                 </div>
-              )}
-              {avgWind !== null && (
-                <div className="avg-metric-card">
-                  <Wind size={20} className="avg-icon" />
-                  <div>
-                    <span className="avg-val">{avgWind} м/с</span>
-                    <span className="avg-lbl">Средняя скорость ветра</span>
-                  </div>
-                </div>
-              )}
-              {avgTemp !== null && (
-                <div className="avg-metric-card">
-                  <Thermometer size={20} className="avg-icon" />
-                  <div>
-                    <span className="avg-val">{avgTemp} °C</span>
-                    <span className="avg-lbl">Средняя температура</span>
-                  </div>
-                </div>
-              )}
+                <span className="month-label">{MONTH_LABELS[index]}</span>
+              </div>
+            ))}
+          </div>
+
+          {stats.years.length > 0 && (
+            <div className="year-chips">
+              {stats.years.map(({ year, count }) => (
+                <span key={year} className="year-chip">{year}: <strong>{count}</strong></span>
+              ))}
             </div>
-          </div>
-        )}
+          )}
+        </section>
       </div>
     </div>
   );

@@ -1,312 +1,438 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   EVENT_CATEGORIES,
   SEVERITY_LEVELS,
-  HAZARDS,
   MCS_STRUCTURAL_FEATURES,
   HAIL_SIZE_CLASSES,
   SQUALL_INTENSITIES,
   TORNADO_ORIGINS,
   TORNADO_INTENSITIES,
-  getDefaultClassificationAttributes,
-  getEventClassification
+  getEventClassification,
+  normalizeClassification
 } from '../types/storm';
-import { parsePhotoMetadata } from '../services/exif';
-import { X, Upload, Trash2, Camera, MapPin, Sparkles, AlertCircle } from 'lucide-react';
+import { parsePhotoMetadata, toDateTimeLocalValue } from '../services/exif';
+import { preparePhotoFromFile, photoPreviewSrc } from '../services/photos';
+import { isValidLatitude, isValidLongitude, parseCoordinateInput } from '../services/events';
+import Modal from './Modal';
+import ConfirmModal from './ConfirmModal';
+import { Upload, Trash2, Sparkles, AlertCircle, Loader2, CloudLightning } from 'lucide-react';
+
+let photoCounter = 0;
+const createPhotoId = () => {
+  photoCounter += 1;
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `photo_${crypto.randomUUID()}`;
+  }
+  return `photo_${Date.now()}_${photoCounter}_${Math.random().toString(36).slice(2, 8)}`;
+};
+
+const createEventId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `evt_${crypto.randomUUID()}`;
+  }
+  return `evt_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+};
+
+const buildInitialState = (eventToEdit) => {
+  if (eventToEdit) {
+    const classification = getEventClassification(eventToEdit);
+    return {
+      title: eventToEdit.title || '',
+      date: eventToEdit.date || '',
+      category: classification.category,
+      subtype: classification.subtype,
+      attributes: classification.attributes,
+      severity: SEVERITY_LEVELS[eventToEdit.severity] ? eventToEdit.severity : 'moderate',
+      location: eventToEdit.location || '',
+      // Coordinates live in the form as strings so a half-typed value such as
+      // "-" or "56." does not get thrown away while the user is still typing.
+      latitude: typeof eventToEdit.latitude === 'number' ? String(eventToEdit.latitude) : '',
+      longitude: typeof eventToEdit.longitude === 'number' ? String(eventToEdit.longitude) : '',
+      notes: eventToEdit.notes || '',
+      tagsInput: Array.isArray(eventToEdit.tags) ? eventToEdit.tags.join(', ') : '',
+      photos: Array.isArray(eventToEdit.photos) ? eventToEdit.photos : []
+    };
+  }
+
+  const classification = normalizeClassification({ category: 'thunderstorm', subtype: 'unspecified' });
+  return {
+    title: '',
+    date: toDateTimeLocalValue(new Date()) || '',
+    category: classification.category,
+    subtype: classification.subtype,
+    attributes: classification.attributes,
+    severity: 'moderate',
+    location: '',
+    latitude: '',
+    longitude: '',
+    notes: '',
+    tagsInput: '',
+    photos: []
+  };
+};
 
 export default function EventFormModal({ eventToEdit, onClose, onSave }) {
-  const [title, setTitle] = useState('');
-  const [date, setDate] = useState('');
-  const [category, setCategory] = useState('thunderstorm');
-  const [subtype, setSubtype] = useState('unspecified');
-  const [classificationAttributes, setClassificationAttributes] = useState({});
-  const [severity, setSeverity] = useState('moderate');
-  const [location, setLocation] = useState('');
-  const [latitude, setLatitude] = useState('');
-  const [longitude, setLongitude] = useState('');
-  const [selectedHazards, setSelectedHazards] = useState([]);
-  const [notes, setNotes] = useState('');
-  const [tagsInput, setTagsInput] = useState('');
-  const [photos, setPhotos] = useState([]);
+  const initialState = useMemo(() => buildInitialState(eventToEdit), [eventToEdit]);
+  const [form, setForm] = useState(initialState);
 
-  // Meteorological parameters
-  const [cape, setCape] = useState('');
-  const [shear06, setShear06] = useState('');
-  const [temperature, setTemperature] = useState('');
-  const [dewPoint, setDewPoint] = useState('');
-  const [pressure, setPressure] = useState('');
-  const [windSpeed, setWindSpeed] = useState('');
-  const [hailSize, setHailSize] = useState('');
+  const [exifNotice, setExifNotice] = useState('');
+  const [photoProgress, setPhotoProgress] = useState(null);
+  const [photoError, setPhotoError] = useState('');
+  const [formError, setFormError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
 
-  const [exifNotification, setExifNotification] = useState('');
-  const [isProcessingPhoto, setIsProcessingPhoto] = useState(false);
+  // Set once the user edits the date by hand, so EXIF never overwrites a
+  // deliberate choice while still being able to replace the prefilled default.
+  const dateTouchedRef = useRef(false);
+  const fileInputRef = useRef(null);
+  const noticeTimerRef = useRef(null);
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
-    if (eventToEdit) {
-      setTitle(eventToEdit.title || '');
-      setDate(eventToEdit.date || '');
-      const classification = getEventClassification(eventToEdit);
-      setCategory(classification.category);
-      setSubtype(classification.subtype);
-      setClassificationAttributes(classification.attributes);
-      setSeverity(eventToEdit.severity || 'moderate');
-      setLocation(eventToEdit.location || '');
-      setLatitude(eventToEdit.latitude !== undefined && eventToEdit.latitude !== null ? String(eventToEdit.latitude) : '');
-      setLongitude(eventToEdit.longitude !== undefined && eventToEdit.longitude !== null ? String(eventToEdit.longitude) : '');
-      setSelectedHazards(eventToEdit.hazards || []);
-      setNotes(eventToEdit.notes || '');
-      setTagsInput(eventToEdit.tags ? eventToEdit.tags.join(', ') : '');
-      setPhotos(eventToEdit.photos || []);
+    // Must be set on every mount: StrictMode runs the cleanup once immediately
+    // after mounting in development, and a ref that is only cleared would stay
+    // false for the rest of the dialog's life, silently discarding results.
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    };
+  }, []);
 
-      if (eventToEdit.parameters) {
-        setCape(eventToEdit.parameters.cape || '');
-        setShear06(eventToEdit.parameters.shear06 || '');
-        setTemperature(eventToEdit.parameters.temperature || '');
-        setDewPoint(eventToEdit.parameters.dewPoint || '');
-        setPressure(eventToEdit.parameters.pressure || '');
-        setWindSpeed(eventToEdit.parameters.windSpeed || '');
-        setHailSize(eventToEdit.parameters.hailSize || '');
-      }
-    } else {
-      // Default new date to current local datetime ISO
-      const now = new Date();
-      now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-      setDate(now.toISOString().slice(0, 16));
-      setCategory('thunderstorm');
-      setSubtype('unspecified');
-      setClassificationAttributes(getDefaultClassificationAttributes('thunderstorm'));
+  const patch = useCallback((changes) => setForm(prev => ({ ...prev, ...changes })), []);
+
+  const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialState), [form, initialState]);
+
+  const requestClose = useCallback(() => {
+    if (isSaving) return;
+    if (isDirty) {
+      setShowDiscardConfirm(true);
+      return;
     }
-  }, [eventToEdit]);
+    onClose();
+  }, [isDirty, isSaving, onClose]);
+
+  /* ------------------------------------------------------- classification */
+
+  const category = EVENT_CATEGORIES[form.category] ? form.category : 'other';
+  const categoryInfo = EVENT_CATEGORIES[category];
+  const subtypeInfo = categoryInfo.subtypes.find(item => item.id === form.subtype);
 
   const handleCategoryChange = (nextCategory) => {
-    setCategory(nextCategory);
-    setSubtype('unspecified');
-    setClassificationAttributes(getDefaultClassificationAttributes(nextCategory));
+    const next = normalizeClassification({ category: nextCategory, subtype: 'unspecified' });
+    patch({ category: next.category, subtype: next.subtype, attributes: next.attributes });
   };
 
   const handleSubtypeChange = (nextSubtype) => {
-    setSubtype(nextSubtype);
-    setClassificationAttributes(getDefaultClassificationAttributes(category, nextSubtype));
+    // Attributes are carried over so that, for example, selected MCS structural
+    // features are not wiped just because the subtype changed.
+    const next = normalizeClassification({ category, subtype: nextSubtype, attributes: form.attributes });
+    patch({ subtype: next.subtype, attributes: next.attributes });
   };
 
+  const setAttribute = (key, value) => patch({ attributes: { ...form.attributes, [key]: value } });
+
   const toggleMcsFeature = (featureId) => {
-    setClassificationAttributes(previous => {
-      const structuralFeatures = previous.structuralFeatures || [];
-      return {
-        ...previous,
-        structuralFeatures: structuralFeatures.includes(featureId)
-          ? structuralFeatures.filter(id => id !== featureId)
-          : [...structuralFeatures, featureId]
-      };
-    });
+    const selected = form.attributes.structuralFeatures || [];
+    setAttribute('structuralFeatures', selected.includes(featureId)
+      ? selected.filter(id => id !== featureId)
+      : [...selected, featureId]);
   };
 
   const handleTornadoOriginChange = (tornadoOrigin) => {
-    setClassificationAttributes(previous => {
-      const next = { ...previous, tornadoOrigin };
-      if (tornadoOrigin === 'non_mesocyclonic') {
-        delete next.tornadoIntensity;
-      } else if (!next.tornadoIntensity) {
-        next.tornadoIntensity = 'ifu';
+    const next = { ...form.attributes, tornadoOrigin };
+    if (tornadoOrigin === 'non_mesocyclonic') delete next.tornadoIntensity;
+    else if (!next.tornadoIntensity) next.tornadoIntensity = 'ifu';
+    patch({ attributes: next });
+  };
+
+  /* --------------------------------------------------------------- photos */
+
+  const handlePhotoUpload = async (event) => {
+    const input = event.target;
+    const files = Array.from(input.files || []);
+    // Reset immediately so picking the same file again still fires onChange.
+    input.value = '';
+    if (files.length === 0) return;
+
+    setPhotoError('');
+    setExifNotice('');
+    setPhotoProgress({ done: 0, total: files.length });
+
+    const added = [];
+    const failed = [];
+    let exifDate = null;
+    let exifLat = null;
+    let exifLng = null;
+
+    // Sequential processing keeps peak memory to a single decoded image, which
+    // matters on Android where a batch of 20 camera files would otherwise be
+    // decoded at once.
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i];
+      try {
+        if (!file.type.startsWith('image/')) {
+          failed.push(file.name);
+          continue;
+        }
+
+        const meta = await parsePhotoMetadata(file);
+        if (!exifDate && meta.date) exifDate = meta.date;
+        // Range-checked in parsePhotoMetadata, so 0 is accepted here.
+        if (exifLat === null && meta.lat !== null && meta.lng !== null) {
+          exifLat = meta.lat;
+          exifLng = meta.lng;
+        }
+
+        const prepared = await preparePhotoFromFile(file);
+        added.push({
+          id: createPhotoId(),
+          url: prepared.url,
+          thumb: prepared.thumb,
+          caption: '',
+          exif: meta.exif || {}
+        });
+      } catch (err) {
+        console.error('Could not add photo:', err);
+        failed.push(file.name);
+      } finally {
+        if (isMountedRef.current) setPhotoProgress({ done: i + 1, total: files.length });
       }
-      return next;
-    });
-  };
+    }
 
-  const handleHazardToggle = (hazardKey) => {
-    setSelectedHazards(prev => 
-      prev.includes(hazardKey) ? prev.filter(k => k !== hazardKey) : [...prev, hazardKey]
-    );
-  };
+    if (!isMountedRef.current) return;
+    setPhotoProgress(null);
 
-  const handlePhotoUpload = async (e) => {
-    const files = Array.from(e.target.files);
-    if (!files.length) return;
+    if (added.length > 0) {
+      setForm(prev => {
+        const next = { ...prev, photos: [...prev.photos, ...added] };
+        const notices = [];
 
-    setIsProcessingPhoto(true);
-    setExifNotification('');
+        if (exifDate && !dateTouchedRef.current) {
+          next.date = exifDate;
+          notices.push('дату съёмки');
+        }
+        if (exifLat !== null && next.latitude === '' && next.longitude === '') {
+          next.latitude = String(exifLat);
+          next.longitude = String(exifLng);
+          notices.push('GPS-координаты');
+        }
 
-    const newPhotos = [];
-    let autoDate = null;
-    let autoLat = null;
-    let autoLng = null;
-
-    for (const file of files) {
-      const meta = await parsePhotoMetadata(file);
-
-      if (meta.date && !date) autoDate = meta.date;
-      if (meta.lat && !latitude) autoLat = meta.lat;
-      if (meta.lng && !longitude) autoLng = meta.lng;
-
-      const reader = new FileReader();
-      const photoPromise = new Promise((resolve) => {
-        reader.onload = (event) => {
-          resolve({
-            id: 'photo_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-            url: event.target.result,
-            caption: '',
-            exif: meta.exif || {}
-          });
-        };
-        reader.readAsDataURL(file);
+        if (notices.length > 0) {
+          setExifNotice(`Из EXIF извлечено: ${notices.join(', ')}.`);
+          if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+          noticeTimerRef.current = setTimeout(() => {
+            if (isMountedRef.current) setExifNotice('');
+          }, 6000);
+        }
+        return next;
       });
-
-      const photoObj = await photoPromise;
-      newPhotos.push(photoObj);
     }
 
-    setPhotos(prev => [...prev, ...newPhotos]);
-    setIsProcessingPhoto(false);
-
-    let notices = [];
-    if (autoDate) {
-      setDate(autoDate);
-      notices.push('дату сёмки');
-    }
-    if (autoLat && autoLng) {
-      setLatitude(String(autoLat));
-      setLongitude(String(autoLng));
-      notices.push('GPS координаты');
-    }
-
-    if (notices.length > 0) {
-      setExifNotification(`Извлечены данные EXIF: ${notices.join(', ')}.`);
-      setTimeout(() => setExifNotification(''), 5000);
+    if (failed.length > 0) {
+      setPhotoError(added.length === 0
+        ? `Не удалось добавить файлы: ${failed.join(', ')}`
+        : `Пропущено файлов: ${failed.length} (${failed.join(', ')})`);
     }
   };
 
   const handleRemovePhoto = (photoId) => {
-    setPhotos(prev => prev.filter(p => p.id !== photoId));
+    setForm(prev => ({ ...prev, photos: prev.photos.filter(photo => photo.id !== photoId) }));
   };
 
-  const handlePhotoCaptionChange = (photoId, caption) => {
-    setPhotos(prev => prev.map(p => p.id === photoId ? { ...p, caption } : p));
+  const handleCaptionChange = (photoId, caption) => {
+    setForm(prev => ({
+      ...prev,
+      photos: prev.photos.map(photo => (photo.id === photoId ? { ...photo, caption } : photo))
+    }));
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!title.trim()) {
-      alert('Пожалуйста, укажите название явления');
+  /* ---------------------------------------------------------------- submit */
+
+  const latitudeInvalid = form.latitude !== '' && !isValidLatitude(parseCoordinateInput(form.latitude, 'latitude'));
+  const longitudeInvalid = form.longitude !== '' && !isValidLongitude(parseCoordinateInput(form.longitude, 'longitude'));
+  const coordsIncomplete = (form.latitude !== '') !== (form.longitude !== '');
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (isSaving || photoProgress) return;
+
+    if (!form.title.trim()) {
+      setFormError('Укажите название явления — по нему запись будет видна в архиве.');
+      return;
+    }
+    if (latitudeInvalid || longitudeInvalid) {
+      setFormError('Координаты вне допустимого диапазона: широта −90…90, долгота −180…180.');
+      return;
+    }
+    if (coordsIncomplete) {
+      setFormError('Укажите обе координаты или оставьте оба поля пустыми.');
       return;
     }
 
-    const tagsArray = tagsInput
-      .split(',')
-      .map(t => t.trim().replace(/^#/, ''))
-      .filter(Boolean);
-
-    const eventData = {
-      id: eventToEdit ? eventToEdit.id : 'evt_' + Date.now(),
-      title: title.trim(),
-      date,
-      eventType: category,
-      classification: {
-        category,
-        subtype,
-        attributes: classificationAttributes
-      },
-      severity,
-      location: location.trim(),
-      latitude: latitude !== '' ? parseFloat(latitude) : null,
-      longitude: longitude !== '' ? parseFloat(longitude) : null,
-      hazards: selectedHazards,
-      parameters: {
-        cape: cape ? String(cape) : '',
-        shear06: shear06 ? String(shear06) : '',
-        temperature: temperature ? String(temperature) : '',
-        dewPoint: dewPoint ? String(dewPoint) : '',
-        pressure: pressure ? String(pressure) : '',
-        windSpeed: windSpeed ? String(windSpeed) : '',
-        hailSize: hailSize ? String(hailSize) : ''
-      },
-      notes: notes.trim(),
-      tags: tagsArray,
-      photos,
-      createdAt: eventToEdit ? eventToEdit.createdAt : new Date().toISOString()
-    };
-
-    onSave(eventData);
+    setFormError('');
+    setIsSaving(true);
+    try {
+      await onSave({
+        id: eventToEdit ? eventToEdit.id : createEventId(),
+        title: form.title.trim(),
+        date: form.date,
+        eventType: category,
+        classification: { category, subtype: form.subtype, attributes: form.attributes },
+        severity: form.severity,
+        location: form.location.trim(),
+        latitude: parseCoordinateInput(form.latitude, 'latitude'),
+        longitude: parseCoordinateInput(form.longitude, 'longitude'),
+        notes: form.notes.trim(),
+        tags: form.tagsInput.split(',').map(tag => tag.trim().replace(/^#/, '')).filter(Boolean),
+        photos: form.photos,
+        createdAt: eventToEdit ? eventToEdit.createdAt : new Date().toISOString()
+      });
+    } catch (err) {
+      // The parent reports storage failures; keeping the dialog open means the
+      // user does not lose everything they typed.
+      if (isMountedRef.current) setFormError(err?.message || 'Не удалось сохранить запись.');
+    } finally {
+      if (isMountedRef.current) setIsSaving(false);
+    }
   };
 
-  return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal-card form-modal" onClick={(e) => e.stopPropagation()}>
-        <div className="modal-header">
-          <h2>{eventToEdit ? 'Редактирование метеонаблюдения' : 'Новое метеонаблюдение'}</h2>
-          <button className="close-btn" onClick={onClose}>
-            <X size={20} />
-          </button>
-        </div>
+  const isBusy = isSaving || Boolean(photoProgress);
 
-        <form onSubmit={handleSubmit} className="modal-body scrollable-body">
-          {exifNotification && (
-            <div className="exif-alert">
-              <Sparkles size={16} />
-              <span>{exifNotification}</span>
+  const footer = (
+    <>
+      <button type="button" className="btn-secondary" onClick={requestClose} disabled={isSaving}>
+        Отмена
+      </button>
+      <button type="submit" form="event-form" className="btn-primary" disabled={isBusy}>
+        {isSaving && <Loader2 size={16} className="spin-icon" />}
+        {isSaving ? 'Сохранение…' : eventToEdit ? 'Сохранить изменения' : 'Сохранить в архив'}
+      </button>
+    </>
+  );
+
+  return (
+    <>
+      <Modal
+        title={eventToEdit ? 'Редактирование наблюдения' : 'Новое наблюдение'}
+        titleIcon={<CloudLightning size={20} className="modal-heading-icon" />}
+        onClose={requestClose}
+        footer={footer}
+        className="form-modal"
+        size="wide"
+      >
+        <form id="event-form" onSubmit={handleSubmit} noValidate>
+          {exifNotice && (
+            <div className="inline-alert info">
+              <Sparkles size={16} aria-hidden="true" />
+              <span>{exifNotice}</span>
+            </div>
+          )}
+          {photoError && (
+            <div className="inline-alert warning" role="alert">
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{photoError}</span>
+            </div>
+          )}
+          {formError && (
+            <div className="inline-alert danger" role="alert">
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{formError}</span>
             </div>
           )}
 
-          {/* Title & Date */}
           <div className="form-grid-2">
             <div className="form-group span-2">
-              <label className="form-label">
-                Название явления <span className="req">*</span>
+              <label className="form-label" htmlFor="field-title">
+                Название явления <span className="req" aria-hidden="true">*</span>
               </label>
-              <input 
+              <input
+                id="field-title"
                 type="text"
-                placeholder="Например: Суперячейка с крупным градом и шельфовым облаком"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Например: Суперячейка с крупным градом"
+                value={form.title}
+                onChange={(e) => patch({ title: e.target.value })}
                 className="form-input"
+                maxLength={200}
+                autoComplete="off"
                 required
               />
             </div>
 
             <div className="form-group">
-              <label className="form-label">Дата и время явления</label>
-              <input 
+              <label className="form-label" htmlFor="field-date">Дата и время явления</label>
+              <input
+                id="field-date"
                 type="datetime-local"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
+                value={form.date}
+                onChange={(e) => {
+                  dateTouchedRef.current = true;
+                  patch({ date: e.target.value });
+                }}
                 className="form-input"
               />
             </div>
 
             <div className="form-group">
-              <label className="form-label">Группа явления</label>
-              <select 
-                value={category}
-                onChange={(e) => handleCategoryChange(e.target.value)}
+              <label className="form-label" htmlFor="field-severity">Интенсивность / Опасность</label>
+              <select
+                id="field-severity"
+                value={form.severity}
+                onChange={(e) => patch({ severity: e.target.value })}
                 className="form-select"
               >
-                {Object.values(EVENT_CATEGORIES).map(t => (
-                  <option key={t.id} value={t.id}>{t.label}</option>
+                {Object.values(SEVERITY_LEVELS).map(level => (
+                  <option key={level.id} value={level.id}>{level.label}</option>
                 ))}
               </select>
             </div>
 
             <div className="form-group">
-              <label className="form-label">Подтип</label>
-              <select value={subtype} onChange={(e) => handleSubtypeChange(e.target.value)} className="form-select">
-                {EVENT_CATEGORIES[category].subtypes.map(item => (
+              <label className="form-label" htmlFor="field-category">Группа явления</label>
+              <select
+                id="field-category"
+                value={category}
+                onChange={(e) => handleCategoryChange(e.target.value)}
+                className="form-select"
+              >
+                {Object.values(EVENT_CATEGORIES).map(item => (
                   <option key={item.id} value={item.id}>{item.label}</option>
                 ))}
               </select>
-              {EVENT_CATEGORIES[category].subtypes.find(item => item.id === subtype)?.description && (
-                <span className="form-help-text">{EVENT_CATEGORIES[category].subtypes.find(item => item.id === subtype).description}</span>
-              )}
+            </div>
+
+            <div className="form-group">
+              <label className="form-label" htmlFor="field-subtype">Подтип</label>
+              <select
+                id="field-subtype"
+                value={form.subtype}
+                onChange={(e) => handleSubtypeChange(e.target.value)}
+                className="form-select"
+                disabled={categoryInfo.subtypes.length < 2}
+              >
+                {categoryInfo.subtypes.map(item => (
+                  <option key={item.id} value={item.id}>{item.label}</option>
+                ))}
+              </select>
+              {subtypeInfo?.description && <span className="form-help-text">{subtypeInfo.description}</span>}
             </div>
           </div>
 
           {category === 'mcs' && (
             <div className="form-group">
-              <label className="form-label">Структурные признаки</label>
-              <div className="hazards-checkboxes">
+              <span className="form-label">Структурные признаки</span>
+              <div className="chip-checkbox-group">
                 {MCS_STRUCTURAL_FEATURES.map(feature => {
-                  const checked = (classificationAttributes.structuralFeatures || []).includes(feature.id);
+                  const checked = (form.attributes.structuralFeatures || []).includes(feature.id);
                   return (
-                    <label key={feature.id} className={`hazard-checkbox-label ${checked ? 'checked' : ''}`}>
-                      <input type="checkbox" checked={checked} onChange={() => toggleMcsFeature(feature.id)} className="hidden-checkbox" />
+                    <label key={feature.id} className={`chip-checkbox ${checked ? 'checked' : ''}`}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleMcsFeature(feature.id)}
+                        className="visually-hidden"
+                      />
                       <span>{feature.label}</span>
                     </label>
                   );
@@ -317,48 +443,60 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
 
           {category === 'hail' && (
             <div className="form-group">
-              <label className="form-label">Класс града</label>
+              <label className="form-label" htmlFor="field-hail">Класс града</label>
               <select
-                value={classificationAttributes.hailSizeClass || 'unspecified'}
-                onChange={(e) => setClassificationAttributes({ hailSizeClass: e.target.value })}
+                id="field-hail"
+                value={form.attributes.hailSizeClass || 'unspecified'}
+                onChange={(e) => setAttribute('hailSizeClass', e.target.value)}
                 className="form-select"
               >
-                {HAIL_SIZE_CLASSES.map(item => <option key={item.id} value={item.id}>{item.label}{item.description ? ` — ${item.description}` : ''}</option>)}
+                {HAIL_SIZE_CLASSES.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}{item.description ? ` — ${item.description}` : ''}
+                  </option>
+                ))}
               </select>
             </div>
           )}
 
           {category === 'squall' && (
             <div className="form-group">
-              <label className="form-label">Интенсивность шквала</label>
+              <label className="form-label" htmlFor="field-squall">Интенсивность шквала</label>
               <select
-                value={classificationAttributes.squallIntensity || 'unspecified'}
-                onChange={(e) => setClassificationAttributes({ squallIntensity: e.target.value })}
+                id="field-squall"
+                value={form.attributes.squallIntensity || 'unspecified'}
+                onChange={(e) => setAttribute('squallIntensity', e.target.value)}
                 className="form-select"
               >
-                {SQUALL_INTENSITIES.map(item => <option key={item.id} value={item.id}>{item.label}{item.description ? ` — ${item.description}` : ''}</option>)}
+                {SQUALL_INTENSITIES.map(item => (
+                  <option key={item.id} value={item.id}>
+                    {item.label}{item.description ? ` — ${item.description}` : ''}
+                  </option>
+                ))}
               </select>
             </div>
           )}
 
-          {category === 'tornadic' && subtype === 'tornado' && (
+          {category === 'tornadic' && form.subtype === 'tornado' && (
             <div className="form-grid-2">
               <div className="form-group">
-                <label className="form-label">Происхождение торнадо</label>
+                <label className="form-label" htmlFor="field-tornado-origin">Происхождение торнадо</label>
                 <select
-                  value={classificationAttributes.tornadoOrigin || 'unspecified'}
+                  id="field-tornado-origin"
+                  value={form.attributes.tornadoOrigin || 'unspecified'}
                   onChange={(e) => handleTornadoOriginChange(e.target.value)}
                   className="form-select"
                 >
                   {TORNADO_ORIGINS.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
                 </select>
               </div>
-              {classificationAttributes.tornadoOrigin !== 'non_mesocyclonic' && (
+              {form.attributes.tornadoOrigin !== 'non_mesocyclonic' && (
                 <div className="form-group">
-                  <label className="form-label">Интенсивность торнадо</label>
+                  <label className="form-label" htmlFor="field-tornado-intensity">Интенсивность торнадо</label>
                   <select
-                    value={classificationAttributes.tornadoIntensity || 'ifu'}
-                    onChange={(e) => setClassificationAttributes(previous => ({ ...previous, tornadoIntensity: e.target.value }))}
+                    id="field-tornado-intensity"
+                    value={form.attributes.tornadoIntensity || 'ifu'}
+                    onChange={(e) => setAttribute('tornadoIntensity', e.target.value)}
                     className="form-select"
                   >
                     {TORNADO_INTENSITIES.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}
@@ -368,245 +506,161 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
             </div>
           )}
 
-          <div className="form-grid-2">
-            <div className="form-group">
-              <label className="form-label">Интенсивность / Опасность</label>
-              <select 
-                value={severity} 
-                onChange={(e) => setSeverity(e.target.value)}
-                className="form-select"
-              >
-                {Object.values(SEVERITY_LEVELS).map(s => (
-                  <option key={s.id} value={s.id}>{s.label}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Локация / Населённый пункт</label>
-              <input 
-                type="text"
-                placeholder="Например: Нижегородская обл., г. Бор"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                className="form-input"
-              />
-            </div>
-          </div>
-
-          {/* Map Coordinates */}
           <div className="form-group">
-            <label className="form-label">
-              Координаты на карте (широта, долгота)
-            </label>
-            <div className="form-grid-2">
-              <input 
-                type="number" 
-                step="any"
-                placeholder="Широта (Lat): 56.32688"
-                value={latitude}
-                onChange={(e) => setLatitude(e.target.value)}
-                className="form-input"
-              />
-              <input 
-                type="number" 
-                step="any"
-                placeholder="Долгота (Lng): 44.00598"
-                value={longitude}
-                onChange={(e) => setLongitude(e.target.value)}
-                className="form-input"
-              />
-            </div>
+            <label className="form-label" htmlFor="field-location">Локация / Населённый пункт</label>
+            <input
+              id="field-location"
+              type="text"
+              placeholder="Например: Нижегородская обл., г. Бор"
+              value={form.location}
+              onChange={(e) => patch({ location: e.target.value })}
+              className="form-input"
+              maxLength={200}
+              autoComplete="off"
+            />
           </div>
 
-          {/* Hazards */}
           <div className="form-group">
-            <label className="form-label">Опасные явления и проявления</label>
-            <div className="hazards-checkboxes">
-              {Object.values(HAZARDS).map(h => {
-                const checked = selectedHazards.includes(h.id);
-                return (
-                  <label key={h.id} className={`hazard-checkbox-label ${checked ? 'checked' : ''}`}>
-                    <input 
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => handleHazardToggle(h.id)}
-                      className="hidden-checkbox"
-                    />
-                    <span>{h.label}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Meteorological Parameters */}
-          <div className="form-section-box">
-            <h4 className="form-section-title">Метеорологические параметры (опционально)</h4>
-            <div className="form-grid-3">
-              <div className="form-group">
-                <label className="form-label">CAPE (Дж/кг)</label>
-                <input 
-                  type="number" 
-                  placeholder="2500" 
-                  value={cape} 
-                  onChange={(e) => setCape(e.target.value)} 
-                  className="form-input"
+            <span className="form-label">Координаты на карте</span>
+            <div className="form-grid-2 tight">
+              <div className="field-with-error">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="Широта: 56.32688"
+                  value={form.latitude}
+                  onChange={(e) => patch({ latitude: e.target.value })}
+                  className={`form-input ${latitudeInvalid ? 'invalid' : ''}`}
+                  aria-label="Широта"
+                  aria-invalid={latitudeInvalid}
                 />
+                {latitudeInvalid && <span className="field-error">Широта должна быть в диапазоне −90…90</span>}
               </div>
-
-              <div className="form-group">
-                <label className="form-label">Сдвиг 0-6 км (м/с)</label>
-                <input 
-                  type="number" 
-                  placeholder="22" 
-                  value={shear06} 
-                  onChange={(e) => setShear06(e.target.value)} 
-                  className="form-input"
+              <div className="field-with-error">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="Долгота: 44.00598"
+                  value={form.longitude}
+                  onChange={(e) => patch({ longitude: e.target.value })}
+                  className={`form-input ${longitudeInvalid ? 'invalid' : ''}`}
+                  aria-label="Долгота"
+                  aria-invalid={longitudeInvalid}
                 />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Температура (°C)</label>
-                <input 
-                  type="number" 
-                  placeholder="28" 
-                  value={temperature} 
-                  onChange={(e) => setTemperature(e.target.value)} 
-                  className="form-input"
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Точка росы (°C)</label>
-                <input 
-                  type="number" 
-                  placeholder="19" 
-                  value={dewPoint} 
-                  onChange={(e) => setDewPoint(e.target.value)} 
-                  className="form-input"
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Давление (гПа)</label>
-                <input 
-                  type="number" 
-                  placeholder="1012" 
-                  value={pressure} 
-                  onChange={(e) => setPressure(e.target.value)} 
-                  className="form-input"
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Ветер / Шквал (м/с)</label>
-                <input 
-                  type="number" 
-                  placeholder="25" 
-                  value={windSpeed} 
-                  onChange={(e) => setWindSpeed(e.target.value)} 
-                  className="form-input"
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Размер града (см)</label>
-                <input 
-                  type="number" 
-                  step="0.5" 
-                  placeholder="3.5" 
-                  value={hailSize} 
-                  onChange={(e) => setHailSize(e.target.value)} 
-                  className="form-input"
-                />
+                {longitudeInvalid && <span className="field-error">Долгота должна быть в диапазоне −180…180</span>}
               </div>
             </div>
+            {coordsIncomplete && <span className="field-error">Нужны обе координаты, иначе точка не появится на карте</span>}
           </div>
 
-          {/* Photo upload dropzone */}
           <div className="form-group">
-            <label className="form-label">Фотоснимки наблюдения (извлечение EXIF метаданных)</label>
+            <span className="form-label">Фотоснимки наблюдения</span>
 
             <div className="upload-dropzone">
-              <input 
-                type="file" 
-                accept="image/*" 
-                multiple 
-                onChange={handlePhotoUpload} 
-                id="photo-upload-input" 
-                className="hidden-file-input"
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handlePhotoUpload}
+                id="photo-upload-input"
+                className="visually-hidden"
+                disabled={Boolean(photoProgress)}
               />
               <label htmlFor="photo-upload-input" className="dropzone-label">
-                <Upload size={24} className="upload-icon" />
-                <span>Загрузить снимки наблюдения</span>
+                {photoProgress
+                  ? <Loader2 size={24} className="upload-icon spin-icon" aria-hidden="true" />
+                  : <Upload size={24} className="upload-icon" aria-hidden="true" />}
+                <span className="dropzone-title">
+                  {photoProgress ? 'Обработка снимков…' : 'Выбрать снимки'}
+                </span>
                 <span className="dropzone-sub">
-                  {isProcessingPhoto ? 'Обработка и чтение EXIF...' : 'JPG, PNG, WebP. Автоматическое чтение даты сёмки и GPS'}
+                  {photoProgress
+                    ? `Обработано ${photoProgress.done} из ${photoProgress.total}`
+                    : 'JPG, PNG, WebP. Дата съёмки и GPS считываются из EXIF автоматически'}
                 </span>
               </label>
             </div>
 
-            {/* Photos Preview list */}
-            {photos.length > 0 && (
-              <div className="form-photos-list">
-                {photos.map((photo) => (
-                  <div key={photo.id} className="form-photo-row">
-                    <img src={photo.url} alt="Preview" className="form-photo-thumb" />
-                    <input 
-                      type="text" 
-                      placeholder="Подпись к фото..." 
-                      value={photo.caption || ''} 
-                      onChange={(e) => handlePhotoCaptionChange(photo.id, e.target.value)} 
-                      className="form-input caption-input"
-                    />
-                    <button 
-                      type="button" 
-                      className="icon-action-btn delete" 
-                      onClick={() => handleRemovePhoto(photo.id)}
-                      title="Удалить фото"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  </div>
-                ))}
-              </div>
+            {form.photos.length > 0 && (
+              <>
+                <div className="photos-count-row">
+                  Снимков в записи: <strong>{form.photos.length}</strong>
+                </div>
+                <ul className="form-photos-list">
+                  {form.photos.map((photo, index) => (
+                    <li key={photo.id} className="form-photo-row">
+                      <img
+                        src={photoPreviewSrc(photo)}
+                        alt=""
+                        className="form-photo-thumb"
+                        loading="lazy"
+                        decoding="async"
+                      />
+                      <input
+                        type="text"
+                        placeholder={`Подпись к снимку ${index + 1}`}
+                        value={photo.caption || ''}
+                        onChange={(e) => handleCaptionChange(photo.id, e.target.value)}
+                        className="form-input caption-input"
+                        maxLength={300}
+                      />
+                      <button
+                        type="button"
+                        className="icon-action-btn delete"
+                        onClick={() => handleRemovePhoto(photo.id)}
+                        title="Удалить снимок"
+                        aria-label={`Удалить снимок ${index + 1}`}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
             )}
           </div>
 
-          {/* Notes */}
           <div className="form-group">
-            <label className="form-label">Заметки, структура и полевые наблюдения</label>
-            <textarea 
-              rows={4}
-              placeholder="Подробное описание: движение ячейки, ворот, град, разрушения, метеорадарные особенности..."
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
+            <label className="form-label" htmlFor="field-notes">Заметки и полевые наблюдения</label>
+            <textarea
+              id="field-notes"
+              rows={5}
+              placeholder="Движение ячейки, ворот, град, разрушения, радарные особенности…"
+              value={form.notes}
+              onChange={(e) => patch({ notes: e.target.value })}
               className="form-textarea"
             />
           </div>
 
-          {/* Tags */}
           <div className="form-group">
-            <label className="form-label">Теги (через запятую)</label>
-            <input 
+            <label className="form-label" htmlFor="field-tags">Теги (через запятую)</label>
+            <input
+              id="field-tags"
               type="text"
-              placeholder="Шельф, Град, Мезоциклон, Ночная_гроза"
-              value={tagsInput}
-              onChange={(e) => setTagsInput(e.target.value)}
+              placeholder="Шельф, Град, Мезоциклон"
+              value={form.tagsInput}
+              onChange={(e) => patch({ tagsInput: e.target.value })}
               className="form-input"
+              autoComplete="off"
             />
           </div>
-
-          <div className="form-actions-row">
-            <button type="button" className="btn-secondary" onClick={onClose}>
-              Отмена
-            </button>
-            <button type="submit" className="btn-primary">
-              {eventToEdit ? 'Сохранить изменения' : 'Сохранить в архив'}
-            </button>
-          </div>
         </form>
-      </div>
-    </div>
+      </Modal>
+
+      {showDiscardConfirm && (
+        <ConfirmModal
+          title="Закрыть без сохранения?"
+          message="В форме есть несохранённые изменения. Если закрыть сейчас, они будут потеряны."
+          confirmLabel="Закрыть без сохранения"
+          cancelLabel="Продолжить редактирование"
+          onConfirm={() => {
+            setShowDiscardConfirm(false);
+            onClose();
+          }}
+          onCancel={() => setShowDiscardConfirm(false)}
+        />
+      )}
+    </>
   );
 }

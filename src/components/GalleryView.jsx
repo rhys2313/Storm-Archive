@@ -1,144 +1,138 @@
-import React, { useState } from 'react';
-import { EVENT_CATEGORIES, getClassificationLabel, getEventClassification, getEventTypeInfo } from '../types/storm';
-import { Image as ImageIcon, Camera, Calendar, MapPin, X, ExternalLink, Filter } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { EVENT_CATEGORIES } from '../types/storm';
+import { collectArchivePhotos, formatEventDateShort } from '../services/events';
+import { photoPreviewSrc } from '../services/photos';
+import PhotoLightbox from './PhotoLightbox';
+import { Image as ImageIcon, Camera, Calendar, MapPin, ExternalLink } from 'lucide-react';
 
 export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
-  const [selectedPhoto, setSelectedPhoto] = useState(null);
-  const [typeFilter, setTypeFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [lightboxIndex, setLightboxIndex] = useState(null);
 
-  // Gather all photos from events
-  const allPhotos = [];
-  events.forEach(evt => {
-    if (evt.photos && evt.photos.length > 0) {
-      evt.photos.forEach((photo, idx) => {
-        allPhotos.push({
-          ...photo,
-          eventId: evt.id,
-          eventTitle: evt.title,
-          eventDate: evt.date,
-          eventLocation: evt.location,
-          category: getEventClassification(evt).category,
-          classificationLabel: getClassificationLabel(evt),
-          photoIndex: idx,
-          fullEvent: evt
-        });
-      });
-    }
-  });
+  // Rebuilding this on every render was flattening the whole archive on each
+  // keystroke elsewhere in the app.
+  const allPhotos = useMemo(() => collectArchivePhotos(events), [events]);
 
-  const filteredPhotos = typeFilter 
-    ? allPhotos.filter(p => p.category === typeFilter)
-    : allPhotos;
+  const visiblePhotos = useMemo(
+    () => (categoryFilter ? allPhotos.filter(item => item.category === categoryFilter) : allPhotos),
+    [allPhotos, categoryFilter]
+  );
+
+  // Deleting an event or changing the filter must not leave the lightbox
+  // pointing at an index that no longer exists.
+  useEffect(() => {
+    if (lightboxIndex !== null && lightboxIndex >= visiblePhotos.length) setLightboxIndex(null);
+  }, [visiblePhotos.length, lightboxIndex]);
+
+  const usedCategories = useMemo(() => new Set(allPhotos.map(item => item.category)), [allPhotos]);
+
+  const lightboxItems = useMemo(
+    () => visiblePhotos.map(item => ({
+      photo: item.photo,
+      title: item.eventTitle,
+      subtitle: [formatEventDateShort({ date: item.eventDate }), item.eventLocation].filter(Boolean).join(' · ')
+    })),
+    [visiblePhotos]
+  );
+
+  const activeItem = lightboxIndex !== null ? visiblePhotos[lightboxIndex] : null;
 
   return (
     <div className="gallery-view-container">
-      <div className="gallery-toolbar">
-        <div className="gallery-info">
-          <Camera size={18} />
-          <span>Всего фотоснимков в архиве: <strong>{allPhotos.length}</strong></span>
+      <div className="view-toolbar">
+        <div className="toolbar-info">
+          <Camera size={18} aria-hidden="true" />
+          <span>Всего снимков в архиве: <strong>{allPhotos.length}</strong></span>
+          {categoryFilter && <span className="toolbar-sub">показано: {visiblePhotos.length}</span>}
         </div>
 
         {allPhotos.length > 0 && (
-          <div className="select-wrapper">
-            <select 
-              value={typeFilter} 
-              onChange={(e) => setTypeFilter(e.target.value)}
-              className="filter-select"
-            >
-              <option value="">Все группы</option>
-              {Object.values(EVENT_CATEGORIES).map(t => (
-                <option key={t.id} value={t.id}>{t.label}</option>
-              ))}
-            </select>
-          </div>
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="filter-select"
+            aria-label="Фильтр по группе явлений"
+          >
+            <option value="">Все группы</option>
+            {Object.values(EVENT_CATEGORIES)
+              .filter(category => usedCategories.has(category.id))
+              .map(category => <option key={category.id} value={category.id}>{category.label}</option>)}
+          </select>
         )}
       </div>
 
       {allPhotos.length === 0 ? (
         <div className="empty-state-card">
-          <div className="empty-icon-wrapper">
-            <ImageIcon size={32} />
-          </div>
+          <div className="empty-icon-wrapper"><ImageIcon size={32} aria-hidden="true" /></div>
           <h3>Галерея пуста</h3>
-          <p>В вашем архиве пока нет добавленных снимков. Фотографии из всех созданных метеонаблюдений будут автоматически отображаться здесь.</p>
-          <button className="btn-primary" onClick={onOpenAddModal}>
-            Добавить метеонаблюдение
-          </button>
+          <p>Снимки из всех наблюдений появляются здесь автоматически. Добавьте фотографии к записи, чтобы заполнить галерею.</p>
+          <button type="button" className="btn-primary" onClick={onOpenAddModal}>Добавить наблюдение</button>
         </div>
-      ) : filteredPhotos.length === 0 ? (
+      ) : visiblePhotos.length === 0 ? (
         <div className="empty-state-card">
-          <p>Нет фотографий, соответствующих выбранной категории.</p>
-          <button className="btn-secondary" onClick={() => setTypeFilter('')}>
-            Сбросить фильтр
-          </button>
+          <h3>Ничего не найдено</h3>
+          <p>В выбранной группе явлений снимков нет.</p>
+          <button type="button" className="btn-secondary" onClick={() => setCategoryFilter('')}>Сбросить фильтр</button>
         </div>
       ) : (
-        <div className="gallery-grid">
-          {filteredPhotos.map((photo, i) => {
-            const eventType = getEventTypeInfo(photo.fullEvent);
-            const formattedDate = photo.eventDate ? new Date(photo.eventDate).toLocaleDateString('ru-RU') : '';
+        <ul className="gallery-grid">
+          {visiblePhotos.map((item, index) => {
+            const typeInfo = EVENT_CATEGORIES[item.category] || EVENT_CATEGORIES.other;
+            const formattedDate = formatEventDateShort({ date: item.eventDate });
 
             return (
-              <div key={photo.id || i} className="gallery-card" onClick={() => setSelectedPhoto(photo)}>
-                <div className="gallery-image-wrapper">
-                  <img src={photo.url} alt={photo.caption || photo.eventTitle} className="gallery-img" loading="lazy" />
-                  <div className="gallery-badge" style={{ backgroundColor: eventType.color }}>
-                    {photo.classificationLabel}
-                  </div>
-                </div>
+              <li key={item.key}>
+                <button type="button" className="gallery-card" onClick={() => setLightboxIndex(index)}>
+                  <span className="gallery-image-wrapper">
+                    <img
+                      src={photoPreviewSrc(item.photo)}
+                      alt={item.photo.caption || item.eventTitle}
+                      className="gallery-img"
+                      loading="lazy"
+                      decoding="async"
+                    />
+                    <span className="gallery-badge" style={{ backgroundColor: typeInfo.color }}>{typeInfo.label}</span>
+                  </span>
 
-                <div className="gallery-card-body">
-                  <h4 className="gallery-card-title">{photo.eventTitle}</h4>
-                  <div className="gallery-card-meta">
-                    {formattedDate && <span><Calendar size={12} /> {formattedDate}</span>}
-                    {photo.eventLocation && <span><MapPin size={12} /> {photo.eventLocation}</span>}
-                  </div>
-                  {photo.caption && <p className="gallery-caption">{photo.caption}</p>}
-                </div>
-              </div>
+                  <span className="gallery-card-body">
+                    <span className="gallery-card-title">{item.eventTitle}</span>
+                    <span className="gallery-card-meta">
+                      {formattedDate && (
+                        <span className="meta-chip"><Calendar size={12} aria-hidden="true" /> {formattedDate}</span>
+                      )}
+                      {item.eventLocation && (
+                        <span className="meta-chip truncate"><MapPin size={12} aria-hidden="true" /> {item.eventLocation}</span>
+                      )}
+                    </span>
+                    {item.photo.caption && <span className="gallery-caption">{item.photo.caption}</span>}
+                  </span>
+                </button>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
 
-      {/* Lightbox Modal */}
-      {selectedPhoto && (
-        <div className="lightbox-backdrop" onClick={() => setSelectedPhoto(null)}>
-          <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
-            <button className="close-btn lightbox-close" onClick={() => setSelectedPhoto(null)}>
-              <X size={24} />
+      {activeItem && (
+        <PhotoLightbox
+          items={lightboxItems}
+          index={lightboxIndex}
+          onNavigate={setLightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          actions={(
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => {
+                const event = events.find(candidate => candidate.id === activeItem.eventId);
+                setLightboxIndex(null);
+                if (event) onViewEvent(event);
+              }}
+            >
+              <ExternalLink size={16} aria-hidden="true" /> Перейти к наблюдению
             </button>
-            <img src={selectedPhoto.url} alt="Full size" className="lightbox-image" />
-
-            <div className="lightbox-footer">
-              <div className="lightbox-info-main">
-                <h3>{selectedPhoto.eventTitle}</h3>
-                {selectedPhoto.caption && <p>{selectedPhoto.caption}</p>}
-              </div>
-
-              {selectedPhoto.exif && (
-                <div className="lightbox-exif-info">
-                  {selectedPhoto.exif.camera && <span>📷 {selectedPhoto.exif.camera}</span>}
-                  {selectedPhoto.exif.focalLength && <span>📐 {selectedPhoto.exif.focalLength}</span>}
-                  {selectedPhoto.exif.iso && <span>💡 {selectedPhoto.exif.iso}</span>}
-                  {selectedPhoto.exif.aperture && <span>⭕ {selectedPhoto.exif.aperture}</span>}
-                  {selectedPhoto.exif.exposure && <span>⏱ {selectedPhoto.exif.exposure}</span>}
-                </div>
-              )}
-
-              <button 
-                className="btn-primary view-event-btn" 
-                onClick={() => {
-                  const evt = selectedPhoto.fullEvent;
-                  setSelectedPhoto(null);
-                  onViewEvent(evt);
-                }}
-              >
-                <ExternalLink size={16} /> Перейти к событию
-              </button>
-            </div>
-          </div>
-        </div>
+          )}
+        />
       )}
     </div>
   );

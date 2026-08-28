@@ -1,42 +1,47 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import Header from './components/Header';
 import MobileNav from './components/MobileNav';
 import FilterBar from './components/FilterBar';
 import EventCard from './components/EventCard';
 import EventDetailModal from './components/EventDetailModal';
 import EventFormModal from './components/EventFormModal';
-import MapView from './components/MapView';
 import GalleryView from './components/GalleryView';
 import StatsView from './components/StatsView';
 import DataBackupModal from './components/DataBackupModal';
 import ConfirmModal from './components/ConfirmModal';
 import OfflineBanner from './components/OfflineBanner';
 
+// Leaflet (~150 kB) is only needed on the map tab, so it is split into its own
+// chunk and fetched the first time the user opens that tab.
+const MapView = lazy(() => import('./components/MapView'));
+
 import { getStoredEvents, saveEvent, deleteEvent, clearAllEvents } from './services/storage';
-import { getClassificationSearchText, getEventClassification } from './types/storm';
-import { CloudLightning, Plus, Sparkles, HardDrive, RefreshCw } from 'lucide-react';
+import { EMPTY_FILTERS, areFiltersActive, filterEvents } from './services/events';
+import { useDebouncedValue } from './hooks/useDebouncedValue';
+import { CloudLightning, Plus, HardDrive, Loader2, AlertCircle, X } from 'lucide-react';
 
 export default function App() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('events'); // 'events' | 'map' | 'gallery' | 'stats'
+  const [loadError, setLoadError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [activeTab, setActiveTab] = useState('events');
 
-  // Filters & Search
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [subtypeFilter, setSubtypeFilter] = useState('');
   const [severityFilter, setSeverityFilter] = useState('');
   const [sortBy, setSortBy] = useState('newest');
 
-  // Modals
   const [isFormModalOpen, setIsFormModalOpen] = useState(false);
   const [eventToEdit, setEventToEdit] = useState(null);
-  const [detailModalEvent, setDetailModalEvent] = useState(null);
+  const [detailEventId, setDetailEventId] = useState(null);
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
 
-  // Online / Offline
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isOnline, setIsOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine));
+
+  /* ------------------------------------------------------------ lifecycle */
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -49,120 +54,197 @@ export default function App() {
     };
   }, []);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const data = await getStoredEvents();
-      setEvents(data);
+      setEvents(await getStoredEvents());
+      setLoadError('');
     } catch (err) {
       console.error('Failed to load events:', err);
+      setLoadError(err?.message || 'Не удалось загрузить архив.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadData();
+  }, [loadData]);
+
+  /* --------------------------------------------------------- filter state */
+
+  // Debounced so typing does not re-filter and re-render the grid per keystroke.
+  const debouncedSearch = useDebouncedValue(searchQuery, 220);
+
+  const filters = useMemo(
+    () => ({ searchQuery: debouncedSearch, categoryFilter, subtypeFilter, severityFilter, sortBy }),
+    [debouncedSearch, categoryFilter, subtypeFilter, severityFilter, sortBy]
+  );
+
+  const filteredEvents = useMemo(() => filterEvents(events, filters), [events, filters]);
+  const isFiltered = areFiltersActive({ ...filters, searchQuery });
+
+  const handleResetFilters = useCallback(() => {
+    setSearchQuery(EMPTY_FILTERS.searchQuery);
+    setCategoryFilter(EMPTY_FILTERS.categoryFilter);
+    setSubtypeFilter(EMPTY_FILTERS.subtypeFilter);
+    setSeverityFilter(EMPTY_FILTERS.severityFilter);
+    setSortBy(EMPTY_FILTERS.sortBy);
   }, []);
 
-  // Filter & Sort Logic
-  const filteredEvents = useMemo(() => {
-    return events
-      .filter(evt => {
-        // Search query
-        if (searchQuery.trim()) {
-          const q = searchQuery.toLowerCase().trim();
-          const matchTitle = evt.title?.toLowerCase().includes(q);
-          const matchLoc = evt.location?.toLowerCase().includes(q);
-          const matchNotes = evt.notes?.toLowerCase().includes(q);
-          const matchTags = evt.tags?.some(t => t.toLowerCase().includes(q));
-          const matchClassification = getClassificationSearchText(evt).includes(q);
-          if (!matchTitle && !matchLoc && !matchNotes && !matchTags && !matchClassification) return false;
-        }
+  /* --------------------------------------------------------------- actions */
 
-        // Classification filters
-        const classification = getEventClassification(evt);
-        if (categoryFilter && classification.category !== categoryFilter) return false;
-        if (subtypeFilter && classification.subtype !== subtypeFilter) return false;
+  // The detail dialog is keyed by id rather than by a snapshot, so it always
+  // reflects the freshly reloaded record after an edit.
+  const detailEvent = useMemo(
+    () => (detailEventId ? events.find(event => event.id === detailEventId) || null : null),
+    [detailEventId, events]
+  );
 
-        // Severity filter
-        if (severityFilter && evt.severity !== severityFilter) return false;
+  const eventPendingDeletion = useMemo(
+    () => (deleteConfirmId ? events.find(event => event.id === deleteConfirmId) || null : null),
+    [deleteConfirmId, events]
+  );
 
-        return true;
-      })
-      .sort((a, b) => {
-        if (sortBy === 'newest') {
-          return new Date(b.date || b.createdAt) - new Date(a.date || a.createdAt);
-        }
-        if (sortBy === 'oldest') {
-          return new Date(a.date || a.createdAt) - new Date(b.date || b.createdAt);
-        }
-        if (sortBy === 'severity') {
-          const rank = { extreme: 4, severe: 3, moderate: 2, low: 1 };
-          return (rank[b.severity] || 0) - (rank[a.severity] || 0);
-        }
-        if (sortBy === 'title') {
-          return (a.title || '').localeCompare(b.title || '');
-        }
-        return 0;
-      });
-  }, [events, searchQuery, categoryFilter, subtypeFilter, severityFilter, sortBy]);
-
-  const handleOpenAddModal = () => {
+  const handleOpenAddModal = useCallback(() => {
     setEventToEdit(null);
     setIsFormModalOpen(true);
-  };
+  }, []);
 
-  const handleOpenEditModal = (evt) => {
-    setEventToEdit(evt);
-    setDetailModalEvent(null);
+  const handleOpenEditModal = useCallback((event) => {
+    setEventToEdit(event);
+    setDetailEventId(null);
     setIsFormModalOpen(true);
-  };
+  }, []);
 
-  const handleSaveEvent = async (eventData) => {
-    try {
-      await saveEvent(eventData);
-      await loadData();
-      setIsFormModalOpen(false);
-      setEventToEdit(null);
-    } catch (err) {
-      alert('Ошибка при сохранении события: ' + err.message);
-    }
-  };
+  const handleCloseForm = useCallback(() => {
+    setIsFormModalOpen(false);
+    setEventToEdit(null);
+  }, []);
 
-  const handleDeleteEvent = async (id) => {
+  // Stable identities keep the memoised EventCard from re-rendering.
+  const handleViewEvent = useCallback((event) => setDetailEventId(event.id), []);
+  const handleRequestDelete = useCallback((id) => setDeleteConfirmId(id), []);
+
+  const handleSaveEvent = useCallback(async (eventData) => {
+    // Errors propagate to the form, which keeps the user's input on screen.
+    await saveEvent(eventData);
+    await loadData();
+    setIsFormModalOpen(false);
+    setEventToEdit(null);
+  }, [loadData]);
+
+  const handleDeleteEvent = useCallback(async (id) => {
     try {
       await deleteEvent(id);
-      await loadData();
       setDeleteConfirmId(null);
-      if (detailModalEvent && detailModalEvent.id === id) {
-        setDetailModalEvent(null);
-      }
+      setDetailEventId(current => (current === id ? null : current));
+      await loadData();
     } catch (err) {
-      alert('Ошибка при удалении события: ' + err.message);
+      setDeleteConfirmId(null);
+      setActionError(`Не удалось удалить запись: ${err.message}`);
     }
-  };
+  }, [loadData]);
 
-  const handleClearArchive = async () => {
+  const handleClearArchive = useCallback(async () => {
     try {
       await clearAllEvents();
+      setDetailEventId(null);
       await loadData();
     } catch (err) {
-      alert('Ошибка при очистке архива: ' + err.message);
+      setActionError(`Не удалось очистить архив: ${err.message}`);
     }
-  };
+  }, [loadData]);
 
-  const handleResetFilters = () => {
-    setSearchQuery('');
-    setCategoryFilter('');
-    setSubtypeFilter('');
-    setSeverityFilter('');
-    setSortBy('newest');
+  /* ------------------------------------------------------------------ view */
+
+  const renderEventsTab = () => {
+    if (loading) {
+      return (
+        <div className="loading-state">
+          <Loader2 size={26} className="spin-icon" aria-hidden="true" />
+          <span>Загрузка архива…</span>
+        </div>
+      );
+    }
+
+    if (loadError) {
+      return (
+        <div className="empty-state-card">
+          <div className="empty-icon-wrapper"><AlertCircle size={32} aria-hidden="true" /></div>
+          <h3>Архив не открылся</h3>
+          <p>{loadError}</p>
+          <button type="button" className="btn-primary" onClick={loadData}>Повторить</button>
+        </div>
+      );
+    }
+
+    if (events.length === 0) {
+      return (
+        <div className="empty-archive-hero">
+          <div className="empty-hero-icon"><CloudLightning size={40} aria-hidden="true" /></div>
+          <h2>Ваш Storm Archive пуст</h2>
+          <p>
+            Здесь будут храниться личные метеонаблюдения: грозы, суперячейки, шкваловые вороты,
+            редкие атмосферные явления и фотографии к ним.
+          </p>
+          <div className="empty-hero-actions">
+            <button type="button" className="btn-primary" onClick={handleOpenAddModal}>
+              <Plus size={18} aria-hidden="true" /> Добавить первое наблюдение
+            </button>
+            <button type="button" className="btn-secondary" onClick={() => setIsBackupModalOpen(true)}>
+              <HardDrive size={18} aria-hidden="true" /> Импортировать из JSON
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <>
+        <FilterBar
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          categoryFilter={categoryFilter}
+          setCategoryFilter={setCategoryFilter}
+          subtypeFilter={subtypeFilter}
+          setSubtypeFilter={setSubtypeFilter}
+          severityFilter={severityFilter}
+          setSeverityFilter={setSeverityFilter}
+          sortBy={sortBy}
+          setSortBy={setSortBy}
+          totalResults={filteredEvents.length}
+          totalEvents={events.length}
+          isFiltered={isFiltered}
+          onReset={handleResetFilters}
+        />
+
+        {filteredEvents.length === 0 ? (
+          <div className="empty-state-card">
+            <h3>Ничего не найдено</h3>
+            <p>По запросу или выбранным фильтрам наблюдений нет.</p>
+            <button type="button" className="btn-secondary" onClick={handleResetFilters}>Сбросить фильтры</button>
+          </div>
+        ) : (
+          <div className="events-grid">
+            {filteredEvents.map(event => (
+              <EventCard
+                key={event.id}
+                event={event}
+                onView={handleViewEvent}
+                onEdit={handleOpenEditModal}
+                onDelete={handleRequestDelete}
+              />
+            ))}
+          </div>
+        )}
+      </>
+    );
   };
 
   return (
     <div className="app-shell">
-      <Header 
+      <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenAddModal={handleOpenAddModal}
@@ -173,138 +255,70 @@ export default function App() {
 
       <OfflineBanner isOnline={isOnline} />
 
-      <main className="main-content-container">
-        {activeTab === 'events' && (
-          <div className="events-tab-content">
-            <FilterBar 
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              categoryFilter={categoryFilter}
-              setCategoryFilter={setCategoryFilter}
-              subtypeFilter={subtypeFilter}
-              setSubtypeFilter={setSubtypeFilter}
-              severityFilter={severityFilter}
-              setSeverityFilter={setSeverityFilter}
-              sortBy={sortBy}
-              setSortBy={setSortBy}
-              totalResults={filteredEvents.length}
-              onReset={handleResetFilters}
-            />
+      {actionError && (
+        <div className="app-error-banner" role="alert">
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>{actionError}</span>
+          <button type="button" className="close-btn" onClick={() => setActionError('')} aria-label="Скрыть сообщение">
+            <X size={16} />
+          </button>
+        </div>
+      )}
 
-            {loading ? (
-              <div className="loading-state">
-                <RefreshCw size={24} className="spin-icon" />
-                <span>Загрузка архива...</span>
-              </div>
-            ) : events.length === 0 ? (
-              /* CLEAN EMPTY ARCHIVE FOR NEW USER */
-              <div className="empty-archive-hero">
-                <div className="empty-hero-icon">
-                  <CloudLightning size={40} />
-                </div>
-                <h2>Ваш Storm Archive чист</h2>
-                <p>
-                  Здесь будут храниться ваши личные метеорологические наблюдения: грозы, суперячейки,
-                  шельфовые облака, шквалы, редкие атмосферные явления и фотографии.
-                </p>
-                <div className="empty-hero-actions">
-                  <button className="btn-primary hero-btn" onClick={handleOpenAddModal}>
-                    <Plus size={18} /> Добавить первое наблюдение
-                  </button>
-                  <button className="btn-secondary hero-btn" onClick={() => setIsBackupModalOpen(true)}>
-                    <HardDrive size={18} /> Импортировать из JSON
-                  </button>
-                </div>
-              </div>
-            ) : filteredEvents.length === 0 ? (
-              <div className="empty-state-card">
-                <h3>Ничего не найдено</h3>
-                <p>По вашему запросу или выбранным фильтрам метеонаблюдения не найдены.</p>
-                <button className="btn-secondary" onClick={handleResetFilters}>
-                  Сбросить все фильтры
-                </button>
-              </div>
-            ) : (
-              <div className="events-grid">
-                {filteredEvents.map(evt => (
-                  <EventCard 
-                    key={evt.id}
-                    event={evt}
-                    onView={(item) => setDetailModalEvent(item)}
-                    onEdit={(item) => handleOpenEditModal(item)}
-                    onDelete={(id) => setDeleteConfirmId(id)}
-                  />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+      <main className="main-content-container">
+        {activeTab === 'events' && renderEventsTab()}
 
         {activeTab === 'map' && (
-          <MapView 
-            events={events}
-            onViewEvent={(evt) => setDetailModalEvent(evt)}
-            onOpenAddModal={handleOpenAddModal}
-          />
+          <Suspense fallback={<div className="loading-state"><Loader2 size={26} className="spin-icon" aria-hidden="true" /><span>Загрузка карты…</span></div>}>
+            <MapView events={events} onViewEvent={handleViewEvent} onOpenAddModal={handleOpenAddModal} />
+          </Suspense>
         )}
 
         {activeTab === 'gallery' && (
-          <GalleryView 
-            events={events}
-            onViewEvent={(evt) => setDetailModalEvent(evt)}
-            onOpenAddModal={handleOpenAddModal}
-          />
+          <GalleryView events={events} onViewEvent={handleViewEvent} onOpenAddModal={handleOpenAddModal} />
         )}
 
-        {activeTab === 'stats' && (
-          <StatsView 
-            events={events}
-            onOpenAddModal={handleOpenAddModal}
-          />
-        )}
+        {activeTab === 'stats' && <StatsView events={events} onOpenAddModal={handleOpenAddModal} />}
       </main>
 
-      <MobileNav 
+      <MobileNav
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenAddModal={handleOpenAddModal}
         eventCount={events.length}
       />
 
-      {/* Modals */}
       {isFormModalOpen && (
-        <EventFormModal 
-          eventToEdit={eventToEdit}
-          onClose={() => {
-            setIsFormModalOpen(false);
-            setEventToEdit(null);
-          }}
-          onSave={handleSaveEvent}
-        />
+        <EventFormModal eventToEdit={eventToEdit} onClose={handleCloseForm} onSave={handleSaveEvent} />
       )}
 
-      {detailModalEvent && (
-        <EventDetailModal 
-          event={detailModalEvent}
-          onClose={() => setDetailModalEvent(null)}
-          onEdit={(evt) => handleOpenEditModal(evt)}
-          onDelete={(id) => setDeleteConfirmId(id)}
+      {detailEvent && (
+        <EventDetailModal
+          event={detailEvent}
+          onClose={() => setDetailEventId(null)}
+          onEdit={handleOpenEditModal}
+          onDelete={handleRequestDelete}
         />
       )}
 
       {isBackupModalOpen && (
-        <DataBackupModal 
+        <DataBackupModal
           onClose={() => setIsBackupModalOpen(false)}
           onDataReload={loadData}
           onClearArchive={handleClearArchive}
-          totalEvents={events.length}
+          events={events}
         />
       )}
 
-      {deleteConfirmId && (
-        <ConfirmModal 
-          title="Удаление метеонаблюдения"
-          message="Вы уверены, что хотите полностью удалить эту запись и все связанные с ней снимки?"
+      {eventPendingDeletion && (
+        <ConfirmModal
+          title="Удалить наблюдение?"
+          message={`Запись «${eventPendingDeletion.title}»${
+            eventPendingDeletion.photos.length > 0
+              ? ` и связанные с ней снимки (${eventPendingDeletion.photos.length})`
+              : ''
+          } будут удалены безвозвратно.`}
+          confirmLabel="Удалить"
           onConfirm={() => handleDeleteEvent(deleteConfirmId)}
           onCancel={() => setDeleteConfirmId(null)}
         />
