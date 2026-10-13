@@ -8,6 +8,8 @@ import {
   parseCoordinateInput,
   normalizeEventRecord,
   normalizeEventList,
+  inspectEventRecord,
+  inspectEventList,
   eventMatchesSearch,
   filterEvents,
   sortEvents,
@@ -16,6 +18,7 @@ import {
   computeArchiveStats,
   areFiltersActive
 } from './events';
+import { normalizeClassification } from '../types/storm';
 
 const makeEvent = (overrides = {}) => ({
   id: 'evt_1',
@@ -151,6 +154,84 @@ describe('normalizeEventRecord', () => {
   it('skips invalid entries in a list', () => {
     expect(normalizeEventList([makeEvent(), null, { noId: true }, 'x'])).toHaveLength(1);
     expect(normalizeEventList(null)).toEqual([]);
+  });
+});
+
+describe('defensive archive normalization', () => {
+  it.each([
+    { photos: [{ id: 'same', url: 'data:image/jpeg;base64,A' }, { id: 'same', url: 'data:image/jpeg;base64,B' }] },
+    { photos: [{ url: 'blob:https://example.invalid/expired' }] },
+    { attachmentRefs: [{ id: 'unavailable-blob' }] }
+  ])('reports ambiguous or unavailable media without losing its source: %j', media => {
+    const raw = makeEvent(media);
+    const before = structuredClone(raw);
+    expect(inspectEventRecord(raw).issues).not.toHaveLength(0);
+    expect(raw).toEqual(before);
+  });
+
+  it.each(['derecho', 42, true, {}, { derecho: true }])('isolates malformed MCS features: %j', structuralFeatures => {
+    const raw = makeEvent({ classification: { category: 'mcs', attributes: { structuralFeatures } } });
+    const before = structuredClone(raw);
+    const result = inspectEventRecord(raw);
+    expect(result.record.classification.attributes.structuralFeatures).toEqual([]);
+    expect(result.issues).toContain('Некорректные структурные признаки MCS');
+    expect(raw).toEqual(before);
+  });
+
+  it.each(['mcs', 42, false, [], { category: 'constructor' }, { category: '__proto__' },
+    { category: ['mcs'] }, { category: { toString: 'mcs' } },
+    { category: 'mcs', attributes: 5 }, { category: 'mcs', attributes: [] }
+  ])('handles wrong classification types without exceptions: %j', classification => {
+    const result = inspectEventRecord(makeEvent({ classification }));
+    expect(result.record).not.toBeNull();
+    expect(result.issues.length).toBeGreaterThan(0);
+    expect(() => eventMatchesSearch(result.record, 'test')).not.toThrow();
+    expect(() => computeArchiveStats([result.record])).not.toThrow();
+  });
+
+  it('keeps valid MCS features while reporting unknown values', () => {
+    const result = inspectEventRecord(makeEvent({
+      classification: { category: 'mcs', subtype: 'qlcs', attributes: { structuralFeatures: ['derecho', null, {}, 'unknown', 'derecho', 'lewp'] } }
+    }));
+    expect(result.record.classification.attributes.structuralFeatures).toEqual(['derecho', 'lewp']);
+    expect(result.issues).toHaveLength(1);
+  });
+
+  it('accepts missing optional fields and legacy types without treating them as damage', () => {
+    const legacy = inspectEventRecord({ id: 'legacy', eventType: 'tornado', photos: [{ url: 'data:image/jpeg;base64,AAA' }] });
+    expect(legacy.issues).toEqual([]);
+    expect(legacy.record.classification.subtype).toBe('tornado');
+    expect(normalizeClassification(null, 'constructor').category).toBe('other');
+  });
+
+  it('isolates unreadable records from readable observations', () => {
+    const result = inspectEventList([makeEvent({ id: 'a' }), null, { id: 12 }, makeEvent({ id: 'b' })]);
+    expect(result.events.map(event => event.id)).toEqual(['a', 'b']);
+    expect(result.issues).toHaveLength(2);
+    expect(result.issues.every(issue => issue.unreadable)).toBe(true);
+  });
+
+  it('does not coerce boolean, array or blank coordinates to a real position', () => {
+    for (const value of [true, false, [], ['56'], {}, '   ']) {
+      expect(parseCoordinateInput(value, 'latitude')).toBeNull();
+    }
+  });
+
+  it('prevents malformed camera metadata from crashing React and preserves unknown photo fields', () => {
+    const result = inspectEventRecord(makeEvent({
+      severity: 'constructor',
+      photos: [{ url: 'data:image/jpeg;base64,AAA', source: 'original source', exif: { camera: { value: 'camera' }, iso: ['200'], custom: 'retained' } }]
+    }));
+    expect(result.record.severity).toBe('moderate');
+    expect(result.record.photos[0].source).toBe('original source');
+    expect(result.record.photos[0].exif).toEqual({ custom: 'retained' });
+    expect(result.issues).toContain('Некорректные метаданные фотографии');
+  });
+
+  it('retains exact legacy identities and reports unsupported data instead of silently dropping it', () => {
+    const result = inspectEventRecord({ id: ' legacy ', photos: { original: 'retained in source' }, tags: [42], classification: { category: 'hail', attributes: { futureSize: 15 } } });
+    expect(result.record.id).toBe(' legacy ');
+    expect(result.issues.length).toBe(3);
   });
 });
 

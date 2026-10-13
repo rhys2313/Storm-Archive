@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { getClassificationLabel, getEventTypeInfo } from '../types/storm';
-import { formatEventDateShort, hasCoordinates } from '../services/events';
+import { formatEventDateShort, hasCoordinates, sortEvents } from '../services/events';
+import { accentTextColor } from '../services/presentation';
 import { MapPin, Info } from 'lucide-react';
 
 const DEFAULT_CENTER = [55.75, 37.61];
@@ -20,7 +21,7 @@ const buildPopupContent = (event, color, onOpen) => {
 
   const type = document.createElement('span');
   type.className = 'map-popup-type';
-  type.style.color = color;
+  type.style.color = accentTextColor(color);
   type.textContent = getClassificationLabel(event);
   root.appendChild(type);
 
@@ -49,11 +50,36 @@ const buildPopupContent = (event, color, onOpen) => {
   return root;
 };
 
-export default function MapView({ events, onViewEvent, onOpenAddModal }) {
+const buildLocationPopup = (events, color, onOpen) => {
+  if (events.length === 1) return buildPopupContent(events[0], color, onOpen);
+  const root = document.createElement('div');
+  root.className = 'map-popup-card';
+  const heading = document.createElement('h4');
+  heading.className = 'map-popup-title';
+  heading.textContent = `Наблюдений в этой точке: ${events.length}`;
+  root.appendChild(heading);
+  const list = document.createElement('ul');
+  list.className = 'map-popup-list';
+  for (const event of sortEvents(events, 'newest')) {
+    const item = document.createElement('li');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'map-popup-btn map-popup-list-btn';
+    button.textContent = [formatEventDateShort(event), event.title].filter(Boolean).join(' — ');
+    button.addEventListener('click', () => onOpen(event));
+    item.appendChild(button);
+    list.appendChild(item);
+  }
+  root.appendChild(list);
+  return root;
+};
+
+export default function MapView({ events, onViewEvent, onOpenAddModal, onOpenArchive }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef(null);
   const fittedSignatureRef = useRef(null);
+  const [tilesUnavailable, setTilesUnavailable] = useState(() => !navigator.onLine);
 
   // Keeping the callback in a ref means marker popups always call the latest
   // handler without having to rebuild every marker when the parent re-renders.
@@ -84,12 +110,17 @@ export default function MapView({ events, onViewEvent, onOpenAddModal }) {
     }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       className: 'dark-map-tiles',
       // OpenStreetMap's tile usage policy requires visible attribution.
       attribution: '© OpenStreetMap'
-    }).addTo(map);
+    });
+    tiles.on('tileerror', () => setTilesUnavailable(true));
+    tiles.on('tileload', () => setTilesUnavailable(false));
+    tiles.addTo(map);
+    const reconnect = () => tiles.redraw();
+    window.addEventListener('online', reconnect);
 
     markersRef.current = L.layerGroup().addTo(map);
     mapRef.current = map;
@@ -105,6 +136,7 @@ export default function MapView({ events, onViewEvent, onOpenAddModal }) {
     return () => {
       cancelAnimationFrame(raf);
       observer?.disconnect();
+      window.removeEventListener('online', reconnect);
       // Without remove() the instance keeps its window listeners and DOM
       // handlers alive every time the user leaves and returns to the map tab.
       map.remove();
@@ -126,18 +158,25 @@ export default function MapView({ events, onViewEvent, onOpenAddModal }) {
 
     const bounds = L.latLngBounds();
 
+    const locations = new Map();
     for (const event of mappable) {
-      const color = getEventTypeInfo(event).color || '#38bdf8';
+      const key = `${event.latitude}:${event.longitude}`;
+      if (!locations.has(key)) locations.set(key, []);
+      locations.get(key).push(event);
+    }
+    for (const group of locations.values()) {
+      const event = group[0];
+      const color = group.length > 1 ? '#38bdf8' : getEventTypeInfo(event).color || '#38bdf8';
       const icon = L.divIcon({
         className: 'custom-map-pin',
-        html: `<span class="pin-inner" style="background-color:${color};box-shadow:0 0 12px ${color}80"></span>`,
-        iconSize: [22, 22],
-        iconAnchor: [11, 11]
+        html: `<span class="pin-inner ${group.length > 1 ? 'pin-group' : ''}" style="background-color:${color};box-shadow:0 0 12px ${color}80">${group.length > 1 ? group.length : ''}</span>`,
+        iconSize: [44, 44],
+        iconAnchor: [22, 22]
       });
 
-      const marker = L.marker([event.latitude, event.longitude], { icon, title: event.title });
+      const marker = L.marker([event.latitude, event.longitude], { icon, title: group.length > 1 ? `Наблюдений в этой точке: ${group.length}` : event.title });
       marker.bindPopup(
-        () => buildPopupContent(event, color, evt => onViewEventRef.current?.(evt)),
+        () => buildLocationPopup(group, color, evt => onViewEventRef.current?.(evt)),
         { className: 'custom-leaflet-popup', minWidth: 220, maxWidth: 280 }
       );
       markers.addLayer(marker);
@@ -159,6 +198,9 @@ export default function MapView({ events, onViewEvent, onOpenAddModal }) {
           <MapPin size={16} aria-hidden="true" />
           <span>Наблюдений на карте: <strong>{mappable.length}</strong></span>
         </div>
+        {tilesUnavailable && <div className="map-stats-badge map-tiles-notice" role="status">
+          <span>Подложка карты недоступна. Локальные отметки и записи доступны.</span>
+        </div>}
       </div>
 
       {mappable.length === 0 && (
@@ -172,6 +214,7 @@ export default function MapView({ events, onViewEvent, onOpenAddModal }) {
           <button type="button" className="btn-primary" onClick={onOpenAddModal}>
             Добавить наблюдение
           </button>
+          {events.length > 0 && <button type="button" className="btn-secondary" onClick={onOpenArchive}>Открыть архив</button>}
         </div>
       )}
 

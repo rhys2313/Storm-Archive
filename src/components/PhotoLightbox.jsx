@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { X, ChevronLeft, ChevronRight, Camera, Aperture, Timer, Ruler, Sun } from 'lucide-react';
 import { useModalLayer } from '../hooks/useModalLayer';
 import { photoFullSrc } from '../services/photos';
+import ArchiveImage from './ArchiveImage';
 
 const ExifRow = ({ exif }) => {
   if (!exif) return null;
@@ -105,7 +106,7 @@ export default function PhotoLightbox({ items, index, onNavigate, onClose, actio
             </button>
           )}
 
-          <img
+          <ArchiveImage
             // Keying by photo id forces a fresh element per photo so the
             // previous decoded bitmap can be released.
             key={current.photo.id || index}
@@ -121,7 +122,7 @@ export default function PhotoLightbox({ items, index, onNavigate, onClose, actio
           )}
         </div>
 
-        <div className="lightbox-footer">
+        <div className="lightbox-footer" tabIndex={0} role="region" aria-label="Подпись и сведения о снимке">
           {current.title && <h3 className="lightbox-title">{current.title}</h3>}
           {current.subtitle && <p className="lightbox-subtitle">{current.subtitle}</p>}
           {current.photo.caption && <p className="lightbox-caption">{current.photo.caption}</p>}

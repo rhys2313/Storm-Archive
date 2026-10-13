@@ -51,7 +51,7 @@ export default function Header({ activeTab, setActiveTab, onOpenAddModal, onOpen
             <HardDrive size={18} />
           </button>
 
-          <button type="button" className="btn-primary add-event-btn" onClick={onOpenAddModal}>
+          <button type="button" className="btn-primary add-event-btn" onClick={onOpenAddModal} aria-label="Добавить наблюдение" title="Добавить наблюдение">
             <Plus size={18} aria-hidden="true" />
             <span className="btn-label">Добавить наблюдение</span>
           </button>

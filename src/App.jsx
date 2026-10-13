@@ -10,12 +10,15 @@ import StatsView from './components/StatsView';
 import DataBackupModal from './components/DataBackupModal';
 import ConfirmModal from './components/ConfirmModal';
 import OfflineBanner from './components/OfflineBanner';
+import PwaStatus from './components/PwaStatus';
+import ShowMore from './components/ShowMore';
+import { useSectionNavigation } from './hooks/useSectionNavigation';
 
 // Leaflet (~150 kB) is only needed on the map tab, so it is split into its own
 // chunk and fetched the first time the user opens that tab.
 const MapView = lazy(() => import('./components/MapView'));
 
-import { getStoredEvents, saveEvent, deleteEvent, clearAllEvents } from './services/storage';
+import { getStoredArchive, saveEvent, deleteEvent, clearAllEvents, retryStorageConnection } from './services/storage';
 import { EMPTY_FILTERS, areFiltersActive, filterEvents } from './services/events';
 import { useDebouncedValue } from './hooks/useDebouncedValue';
 import { CloudLightning, Plus, HardDrive, Loader2, AlertCircle, X } from 'lucide-react';
@@ -25,7 +28,11 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [actionError, setActionError] = useState('');
-  const [activeTab, setActiveTab] = useState('events');
+  const [archiveInfo, setArchiveInfo] = useState({ issues: [], recordCount: 0, hasStoredData: false });
+  const { activeTab, setActiveTab, mainRef } = useSectionNavigation();
+  const [archiveLimit, setArchiveLimit] = useState(36);
+  const [galleryFilter, setGalleryFilter] = useState('');
+  const [galleryLimit, setGalleryLimit] = useState(48);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
@@ -54,10 +61,13 @@ export default function App() {
     };
   }, []);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ retryStorage = false } = {}) => {
     setLoading(true);
     try {
-      setEvents(await getStoredEvents());
+      if (retryStorage) await retryStorageConnection();
+      const { events: loadedEvents, ...info } = await getStoredArchive();
+      setEvents(loadedEvents);
+      setArchiveInfo(info);
       setLoadError('');
     } catch (err) {
       console.error('Failed to load events:', err);
@@ -82,6 +92,7 @@ export default function App() {
   );
 
   const filteredEvents = useMemo(() => filterEvents(events, filters), [events, filters]);
+  useEffect(() => { setArchiveLimit(36); }, [searchQuery, categoryFilter, subtypeFilter, severityFilter, sortBy]);
   const isFiltered = areFiltersActive({ ...filters, searchQuery });
 
   const handleResetFilters = useCallback(() => {
@@ -107,15 +118,29 @@ export default function App() {
   );
 
   const handleOpenAddModal = useCallback(() => {
+    if (archiveInfo.storage?.readOnly) {
+      setActionError('Изменения заблокированы: одно из хранилищ недоступно или имеет неподдерживаемую схему. Откройте «Данные и резервные копии» для диагностики.');
+      return;
+    }
     setEventToEdit(null);
     setIsFormModalOpen(true);
-  }, []);
+  }, [archiveInfo.storage?.readOnly]);
 
   const handleOpenEditModal = useCallback((event) => {
+    if (archiveInfo.storage?.readOnly || archiveInfo.storage?.overlapIds.includes(event.id)) {
+      setDetailEventId(null);
+      setActionError('Запись защищена от изменения. Проверьте хранилища и объедините копии или сохраните обе версии в разделе «Данные и резервные копии».');
+      return;
+    }
+    if (archiveInfo.issues.some(issue => issue.id === event.id)) {
+      setDetailEventId(null);
+      setActionError('Запись содержит повреждённые данные. Её исходное содержимое сохранено. Откройте «Данные и резервные копии» и экспортируйте архив перед восстановлением.');
+      return;
+    }
     setEventToEdit(event);
     setDetailEventId(null);
     setIsFormModalOpen(true);
-  }, []);
+  }, [archiveInfo.issues, archiveInfo.storage]);
 
   const handleCloseForm = useCallback(() => {
     setIsFormModalOpen(false);
@@ -174,12 +199,30 @@ export default function App() {
           <div className="empty-icon-wrapper"><AlertCircle size={32} aria-hidden="true" /></div>
           <h3>Архив не открылся</h3>
           <p>{loadError}</p>
-          <button type="button" className="btn-primary" onClick={loadData}>Повторить</button>
+          <button type="button" className="btn-primary" onClick={() => loadData({ retryStorage: true })}>Повторить</button>
         </div>
       );
     }
 
     if (events.length === 0) {
+      if (archiveInfo.hasStoredData) {
+        if (archiveInfo.storage?.incomplete && archiveInfo.issues.length === 0) {
+          return (
+            <div className="empty-state-card">
+              <h3>{archiveInfo.storage.kind === 'idb' ? 'Не удалось проверить весь архив' : 'Основной архив недоступен'}</h3>
+              <p>Содержимое всех хранилищ не удалось проверить. Это не означает, что архив пуст. Данные сохранены в своих хранилищах.</p>
+              <button type="button" className="btn-primary" onClick={() => loadData({ retryStorage: true })}>Проверить хранилища</button>
+            </div>
+          );
+        }
+        return (
+          <div className="empty-state-card">
+            <h3>Записи требуют восстановления</h3>
+            <p>Исходные данные сохранены, но их не удалось безопасно показать. {archiveInfo.storage?.readOnly ? 'Для полного доступа восстановите доступ к хранилищам.' : 'Экспорт включает исходное содержимое.'}</p>
+            <button type="button" className="btn-primary" onClick={() => setIsBackupModalOpen(true)}>Данные и резервные копии</button>
+          </div>
+        );
+      }
       return (
         <div className="empty-archive-hero">
           <div className="empty-hero-icon"><CloudLightning size={40} aria-hidden="true" /></div>
@@ -226,8 +269,8 @@ export default function App() {
             <button type="button" className="btn-secondary" onClick={handleResetFilters}>Сбросить фильтры</button>
           </div>
         ) : (
-          <div className="events-grid">
-            {filteredEvents.map(event => (
+          <div className="events-grid" id="archive-list">
+            {filteredEvents.slice(0, archiveLimit).map(event => (
               <EventCard
                 key={event.id}
                 event={event}
@@ -238,12 +281,15 @@ export default function App() {
             ))}
           </div>
         )}
+        <ShowMore shown={Math.min(archiveLimit, filteredEvents.length)} total={filteredEvents.length}
+          label="наблюдения" listId="archive-list" onMore={() => setArchiveLimit(value => value + 36)} />
       </>
     );
   };
 
   return (
     <div className="app-shell">
+      <button type="button" className="skip-link" onClick={() => mainRef.current?.focus()}>К содержимому</button>
       <Header
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -254,6 +300,26 @@ export default function App() {
       />
 
       <OfflineBanner isOnline={isOnline} />
+      <PwaStatus blocked={isFormModalOpen || Boolean(detailEvent) || isBackupModalOpen || Boolean(eventPendingDeletion)} />
+
+      {archiveInfo.storage?.notices.length > 0 && (
+        <div className="app-error-banner" role="status">
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>{archiveInfo.storage.notices.join(' ')}</span>
+          <button type="button" className="btn-secondary" onClick={() => setIsBackupModalOpen(true)}>Проверить данные</button>
+        </div>
+      )}
+
+      {archiveInfo.issues.length > 0 && (
+        <div className="app-error-banner" role="alert">
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>
+            {archiveInfo.recordCount == null ? 'Локальный архив требует восстановления.' : `Проблемных записей: ${archiveInfo.issues.length}.`} Доступная часть архива открыта.
+            {archiveInfo.storage?.readOnly ? 'Исходные данные сохранены. Для полного доступа требуется восстановить доступ к хранилищам.' : 'Исходные данные сохранены без изменений и включены в экспорт доступной части.'}
+          </span>
+          <button type="button" className="btn-secondary" onClick={() => setIsBackupModalOpen(true)}>Резервная копия</button>
+        </div>
+      )}
 
       {actionError && (
         <div className="app-error-banner" role="alert">
@@ -265,20 +331,25 @@ export default function App() {
         </div>
       )}
 
-      <main className="main-content-container">
+      <main className="main-content-container" ref={mainRef} tabIndex={-1} aria-labelledby="section-heading">
+        <h2 id="section-heading" className="section-heading">{{ events: 'Архив наблюдений', map: 'Карта наблюдений', gallery: 'Галерея', stats: 'Статистика' }[activeTab]}</h2>
+        {activeTab !== 'events' && (loading || loadError || (archiveInfo.hasStoredData && events.length === 0)) ? renderEventsTab() : <>
         {activeTab === 'events' && renderEventsTab()}
 
         {activeTab === 'map' && (
           <Suspense fallback={<div className="loading-state"><Loader2 size={26} className="spin-icon" aria-hidden="true" /><span>Загрузка карты…</span></div>}>
-            <MapView events={events} onViewEvent={handleViewEvent} onOpenAddModal={handleOpenAddModal} />
+            <MapView events={events} onViewEvent={handleViewEvent} onOpenAddModal={handleOpenAddModal} onOpenArchive={() => setActiveTab('events')} />
           </Suspense>
         )}
 
         {activeTab === 'gallery' && (
-          <GalleryView events={events} onViewEvent={handleViewEvent} onOpenAddModal={handleOpenAddModal} />
+          <GalleryView events={events} onViewEvent={handleViewEvent} onOpenAddModal={handleOpenAddModal}
+            categoryFilter={galleryFilter} onCategoryChange={value => { setGalleryFilter(value); setGalleryLimit(48); }}
+            limit={galleryLimit} onShowMore={() => setGalleryLimit(value => value + 48)} onOpenArchive={() => setActiveTab('events')} />
         )}
 
         {activeTab === 'stats' && <StatsView events={events} onOpenAddModal={handleOpenAddModal} />}
+        </>}
       </main>
 
       <MobileNav
@@ -307,6 +378,7 @@ export default function App() {
           onDataReload={loadData}
           onClearArchive={handleClearArchive}
           events={events}
+          archiveInfo={archiveInfo}
         />
       )}
 

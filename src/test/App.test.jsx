@@ -69,7 +69,7 @@ describe('creating an observation', () => {
     const dialog = await openCreateForm(user);
 
     await fillTitle(user, dialog, 'Суперячейка над Бором');
-    await user.type(within(dialog).getByLabelText(/Локация/i), 'Нижегородская обл., г. Бор');
+    await user.type(within(dialog).getByLabelText(/Место наблюдения/i), 'Нижегородская обл., г. Бор');
     await submitForm(user);
 
     await waitFor(() => {

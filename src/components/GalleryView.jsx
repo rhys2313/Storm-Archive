@@ -3,10 +3,12 @@ import { EVENT_CATEGORIES } from '../types/storm';
 import { collectArchivePhotos, formatEventDateShort } from '../services/events';
 import { photoPreviewSrc } from '../services/photos';
 import PhotoLightbox from './PhotoLightbox';
+import ArchiveImage from './ArchiveImage';
+import ShowMore from './ShowMore';
+import { badgeTextColor } from '../services/presentation';
 import { Image as ImageIcon, Camera, Calendar, MapPin, ExternalLink } from 'lucide-react';
 
-export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
-  const [categoryFilter, setCategoryFilter] = useState('');
+export default function GalleryView({ events, onViewEvent, onOpenAddModal, categoryFilter = '', onCategoryChange, limit = 48, onShowMore, onOpenArchive }) {
   const [lightboxIndex, setLightboxIndex] = useState(null);
 
   // Rebuilding this on every render was flattening the whole archive on each
@@ -49,7 +51,7 @@ export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
         {allPhotos.length > 0 && (
           <select
             value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
+            onChange={(e) => onCategoryChange(e.target.value)}
             className="filter-select"
             aria-label="Фильтр по группе явлений"
           >
@@ -66,17 +68,18 @@ export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
           <div className="empty-icon-wrapper"><ImageIcon size={32} aria-hidden="true" /></div>
           <h3>Галерея пуста</h3>
           <p>Снимки из всех наблюдений появляются здесь автоматически. Добавьте фотографии к записи, чтобы заполнить галерею.</p>
+          {events.length > 0 && <button type="button" className="btn-secondary" onClick={onOpenArchive}>Открыть архив</button>}
           <button type="button" className="btn-primary" onClick={onOpenAddModal}>Добавить наблюдение</button>
         </div>
       ) : visiblePhotos.length === 0 ? (
         <div className="empty-state-card">
           <h3>Ничего не найдено</h3>
           <p>В выбранной группе явлений снимков нет.</p>
-          <button type="button" className="btn-secondary" onClick={() => setCategoryFilter('')}>Сбросить фильтр</button>
+          <button type="button" className="btn-secondary" onClick={() => onCategoryChange('')}>Сбросить фильтр</button>
         </div>
       ) : (
-        <ul className="gallery-grid">
-          {visiblePhotos.map((item, index) => {
+        <ul className="gallery-grid" id="gallery-list">
+          {visiblePhotos.slice(0, limit).map((item, index) => {
             const typeInfo = EVENT_CATEGORIES[item.category] || EVENT_CATEGORIES.other;
             const formattedDate = formatEventDateShort({ date: item.eventDate });
 
@@ -84,14 +87,14 @@ export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
               <li key={item.key}>
                 <button type="button" className="gallery-card" onClick={() => setLightboxIndex(index)}>
                   <span className="gallery-image-wrapper">
-                    <img
+                    <ArchiveImage
                       src={photoPreviewSrc(item.photo)}
                       alt={item.photo.caption || item.eventTitle}
                       className="gallery-img"
                       loading="lazy"
                       decoding="async"
                     />
-                    <span className="gallery-badge" style={{ backgroundColor: typeInfo.color }}>{typeInfo.label}</span>
+                    <span className="gallery-badge" style={{ backgroundColor: typeInfo.color, color: badgeTextColor(typeInfo.color) }}>{typeInfo.label}</span>
                   </span>
 
                   <span className="gallery-card-body">
@@ -112,6 +115,8 @@ export default function GalleryView({ events, onViewEvent, onOpenAddModal }) {
           })}
         </ul>
       )}
+      <ShowMore shown={Math.min(limit, visiblePhotos.length)} total={visiblePhotos.length}
+        label="снимки" listId="gallery-list" onMore={onShowMore} />
 
       {activeItem && (
         <PhotoLightbox

@@ -14,6 +14,7 @@ export default function Modal({
   children,
   footer,
   onClose,
+  dismissDisabled = false,
   className = '',
   labelledBy = 'modal-title',
   size = 'default'
@@ -37,7 +38,7 @@ export default function Modal({
               <h2 id={labelledBy}>{title}</h2>
             </div>
           )}
-          <button type="button" className="close-btn" onClick={onClose} aria-label="Закрыть">
+          <button type="button" className="close-btn" onClick={onClose} aria-label="Закрыть" disabled={dismissDisabled}>
             <X size={20} />
           </button>
         </div>

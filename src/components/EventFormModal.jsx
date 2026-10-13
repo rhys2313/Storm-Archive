@@ -15,6 +15,8 @@ import { preparePhotoFromFile, photoPreviewSrc } from '../services/photos';
 import { isValidLatitude, isValidLongitude, parseCoordinateInput } from '../services/events';
 import Modal from './Modal';
 import ConfirmModal from './ConfirmModal';
+import PhotoLightbox from './PhotoLightbox';
+import ArchiveImage from './ArchiveImage';
 import { Upload, Trash2, Sparkles, AlertCircle, Loader2, CloudLightning } from 'lucide-react';
 
 let photoCounter = 0;
@@ -39,6 +41,8 @@ const buildInitialState = (eventToEdit) => {
     return {
       title: eventToEdit.title || '',
       date: eventToEdit.date || '',
+      dateSource: 'saved',
+      exifAutofill: null,
       category: classification.category,
       subtype: classification.subtype,
       attributes: classification.attributes,
@@ -58,6 +62,8 @@ const buildInitialState = (eventToEdit) => {
   return {
     title: '',
     date: toDateTimeLocalValue(new Date()) || '',
+    dateSource: 'default',
+    exifAutofill: null,
     category: classification.category,
     subtype: classification.subtype,
     attributes: classification.attributes,
@@ -71,6 +77,9 @@ const buildInitialState = (eventToEdit) => {
   };
 };
 
+// Selection provenance and notification details belong to this dialog only.
+const editableValues = ({ dateSource, exifAutofill, ...values }) => values;
+
 export default function EventFormModal({ eventToEdit, onClose, onSave }) {
   const initialState = useMemo(() => buildInitialState(eventToEdit), [eventToEdit]);
   const [form, setForm] = useState(initialState);
@@ -81,12 +90,11 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
   const [formError, setFormError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [allPhotosVisible, setAllPhotosVisible] = useState(false);
+  const [previewIndex, setPreviewIndex] = useState(null);
+  const [validationField, setValidationField] = useState('');
 
-  // Set once the user edits the date by hand, so EXIF never overwrites a
-  // deliberate choice while still being able to replace the prefilled default.
-  const dateTouchedRef = useRef(false);
   const fileInputRef = useRef(null);
-  const noticeTimerRef = useRef(null);
   const isMountedRef = useRef(true);
 
   useEffect(() => {
@@ -96,22 +104,34 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-      if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
     };
   }, []);
 
+  useEffect(() => {
+    if (!form.exifAutofill) return;
+    setExifNotice(`Из EXIF извлечено: ${form.exifAutofill.join(', ')}.`);
+    const timer = setTimeout(() => setExifNotice(''), 6000);
+    return () => clearTimeout(timer);
+  }, [form.exifAutofill]);
+
   const patch = useCallback((changes) => setForm(prev => ({ ...prev, ...changes })), []);
 
-  const isDirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialState), [form, initialState]);
+  const isDirty = useMemo(() => JSON.stringify(editableValues(form)) !== JSON.stringify(editableValues(initialState)), [form, initialState]);
+  useEffect(() => {
+    if (!isDirty && !photoProgress && !isSaving) return;
+    const guard = event => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', guard);
+    return () => window.removeEventListener('beforeunload', guard);
+  }, [isDirty, photoProgress, isSaving]);
 
   const requestClose = useCallback(() => {
     if (isSaving) return;
-    if (isDirty) {
+    if (isDirty || photoProgress) {
       setShowDiscardConfirm(true);
       return;
     }
     onClose();
-  }, [isDirty, isSaving, onClose]);
+  }, [isDirty, isSaving, photoProgress, onClose]);
 
   /* ------------------------------------------------------- classification */
 
@@ -170,6 +190,7 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
     // matters on Android where a batch of 20 camera files would otherwise be
     // decoded at once.
     for (let i = 0; i < files.length; i += 1) {
+      if (!isMountedRef.current) break;
       const file = files[i];
       try {
         if (!file.type.startsWith('image/')) {
@@ -178,6 +199,8 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
         }
 
         const meta = await parsePhotoMetadata(file);
+        const prepared = await preparePhotoFromFile(file);
+        // Only a successfully added photo may supply observation metadata.
         if (!exifDate && meta.date) exifDate = meta.date;
         // Range-checked in parsePhotoMetadata, so 0 is accepted here.
         if (exifLat === null && meta.lat !== null && meta.lng !== null) {
@@ -185,7 +208,6 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
           exifLng = meta.lng;
         }
 
-        const prepared = await preparePhotoFromFile(file);
         added.push({
           id: createPhotoId(),
           url: prepared.url,
@@ -209,8 +231,12 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
         const next = { ...prev, photos: [...prev.photos, ...added] };
         const notices = [];
 
-        if (exifDate && !dateTouchedRef.current) {
+        // Only the new form's current-time default is replaceable. Keep the
+        // first EXIF date, saved dates (including undated legacy events), and
+        // deliberate manual values, including an explicitly cleared field.
+        if (exifDate && prev.dateSource === 'default') {
           next.date = exifDate;
+          next.dateSource = 'exif';
           notices.push('дату съёмки');
         }
         if (exifLat !== null && next.latitude === '' && next.longitude === '') {
@@ -220,11 +246,9 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
         }
 
         if (notices.length > 0) {
-          setExifNotice(`Из EXIF извлечено: ${notices.join(', ')}.`);
-          if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
-          noticeTimerRef.current = setTimeout(() => {
-            if (isMountedRef.current) setExifNotice('');
-          }, 6000);
+          // Keep the updater pure: StrictMode can evaluate it twice. The
+          // effect owns the notification and its timer after state commits.
+          next.exifAutofill = notices;
         }
         return next;
       });
@@ -253,21 +277,30 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
   const latitudeInvalid = form.latitude !== '' && !isValidLatitude(parseCoordinateInput(form.latitude, 'latitude'));
   const longitudeInvalid = form.longitude !== '' && !isValidLongitude(parseCoordinateInput(form.longitude, 'longitude'));
   const coordsIncomplete = (form.latitude !== '') !== (form.longitude !== '');
+  const showError = (message, field) => {
+    setFormError(message);
+    setValidationField(field);
+    requestAnimationFrame(() => {
+      const target = document.getElementById(field);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: 'center', behavior: 'instant' });
+    });
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (isSaving || photoProgress) return;
 
     if (!form.title.trim()) {
-      setFormError('Укажите название явления — по нему запись будет видна в архиве.');
+      showError('Укажите название явления — по нему запись будет видна в архиве.', 'field-title');
       return;
     }
     if (latitudeInvalid || longitudeInvalid) {
-      setFormError('Координаты вне допустимого диапазона: широта −90…90, долгота −180…180.');
+      showError('Координаты вне допустимого диапазона: широта −90…90, долгота −180…180.', latitudeInvalid ? 'field-latitude' : 'field-longitude');
       return;
     }
     if (coordsIncomplete) {
-      setFormError('Укажите обе координаты или оставьте оба поля пустыми.');
+      showError('Укажите обе координаты или оставьте оба поля пустыми.', form.latitude === '' ? 'field-latitude' : 'field-longitude');
       return;
     }
 
@@ -292,7 +325,7 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
     } catch (err) {
       // The parent reports storage failures; keeping the dialog open means the
       // user does not lose everything they typed.
-      if (isMountedRef.current) setFormError(err?.message || 'Не удалось сохранить запись.');
+      if (isMountedRef.current) showError(err?.message || 'Не удалось сохранить запись.', 'form-error');
     } finally {
       if (isMountedRef.current) setIsSaving(false);
     }
@@ -318,11 +351,13 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
         title={eventToEdit ? 'Редактирование наблюдения' : 'Новое наблюдение'}
         titleIcon={<CloudLightning size={20} className="modal-heading-icon" />}
         onClose={requestClose}
+        dismissDisabled={isSaving}
         footer={footer}
         className="form-modal"
         size="wide"
       >
         <form id="event-form" onSubmit={handleSubmit} noValidate>
+          <fieldset disabled={isSaving} className="form-fields" aria-label="Данные наблюдения">
           {exifNotice && (
             <div className="inline-alert info">
               <Sparkles size={16} aria-hidden="true" />
@@ -336,7 +371,7 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
             </div>
           )}
           {formError && (
-            <div className="inline-alert danger" role="alert">
+            <div className="inline-alert danger" role="alert" id="form-error" tabIndex={-1}>
               <AlertCircle size={16} aria-hidden="true" />
               <span>{formError}</span>
             </div>
@@ -357,6 +392,8 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
                 maxLength={200}
                 autoComplete="off"
                 required
+                aria-invalid={validationField === 'field-title' && !form.title.trim()}
+                aria-describedby={validationField === 'field-title' && formError ? 'form-error' : undefined}
               />
             </div>
 
@@ -366,10 +403,7 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
                 id="field-date"
                 type="datetime-local"
                 value={form.date}
-                onChange={(e) => {
-                  dateTouchedRef.current = true;
-                  patch({ date: e.target.value });
-                }}
+                onChange={(e) => patch({ date: e.target.value, dateSource: 'manual' })}
                 className="form-input"
               />
             </div>
@@ -507,7 +541,7 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
           )}
 
           <div className="form-group">
-            <label className="form-label" htmlFor="field-location">Локация / Населённый пункт</label>
+            <label className="form-label" htmlFor="field-location">Место наблюдения</label>
             <input
               id="field-location"
               type="text"
@@ -525,6 +559,7 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
             <div className="form-grid-2 tight">
               <div className="field-with-error">
                 <input
+                  id="field-latitude"
                   type="text"
                   inputMode="decimal"
                   placeholder="Широта: 56.32688"
@@ -532,12 +567,14 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
                   onChange={(e) => patch({ latitude: e.target.value })}
                   className={`form-input ${latitudeInvalid ? 'invalid' : ''}`}
                   aria-label="Широта"
-                  aria-invalid={latitudeInvalid}
+                  aria-invalid={latitudeInvalid || (coordsIncomplete && form.latitude === '')}
+                  aria-describedby={latitudeInvalid ? 'latitude-error' : coordsIncomplete ? 'coordinates-error' : undefined}
                 />
-                {latitudeInvalid && <span className="field-error">Широта должна быть в диапазоне −90…90</span>}
+                {latitudeInvalid && <span className="field-error" id="latitude-error">Широта должна быть в диапазоне −90…90</span>}
               </div>
               <div className="field-with-error">
                 <input
+                  id="field-longitude"
                   type="text"
                   inputMode="decimal"
                   placeholder="Долгота: 44.00598"
@@ -545,12 +582,13 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
                   onChange={(e) => patch({ longitude: e.target.value })}
                   className={`form-input ${longitudeInvalid ? 'invalid' : ''}`}
                   aria-label="Долгота"
-                  aria-invalid={longitudeInvalid}
+                  aria-invalid={longitudeInvalid || (coordsIncomplete && form.longitude === '')}
+                  aria-describedby={longitudeInvalid ? 'longitude-error' : coordsIncomplete ? 'coordinates-error' : undefined}
                 />
-                {longitudeInvalid && <span className="field-error">Долгота должна быть в диапазоне −180…180</span>}
+                {longitudeInvalid && <span className="field-error" id="longitude-error">Долгота должна быть в диапазоне −180…180</span>}
               </div>
             </div>
-            {coordsIncomplete && <span className="field-error">Нужны обе координаты, иначе точка не появится на карте</span>}
+            {coordsIncomplete && <span className="field-error" id="coordinates-error">Нужны обе координаты, иначе точка не появится на карте</span>}
           </div>
 
           <div className="form-group">
@@ -589,14 +627,17 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
                 </div>
                 <ul className="form-photos-list">
                   {form.photos.map((photo, index) => (
-                    <li key={photo.id} className="form-photo-row">
-                      <img
+                    <li key={photo.id} className="form-photo-row" hidden={!allPhotosVisible && index >= 4}>
+                      <button type="button" className="form-photo-preview" aria-label={`Просмотреть снимок ${index + 1}`}
+                        onClick={() => setPreviewIndex(index)}>
+                      <ArchiveImage
                         src={photoPreviewSrc(photo)}
                         alt=""
                         className="form-photo-thumb"
                         loading="lazy"
                         decoding="async"
                       />
+                      </button>
                       <input
                         type="text"
                         placeholder={`Подпись к снимку ${index + 1}`}
@@ -604,6 +645,7 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
                         onChange={(e) => handleCaptionChange(photo.id, e.target.value)}
                         className="form-input caption-input"
                         maxLength={300}
+                        aria-label={`Подпись к снимку ${index + 1}`}
                       />
                       <button
                         type="button"
@@ -617,6 +659,10 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
                     </li>
                   ))}
                 </ul>
+                {form.photos.length > 4 && <button type="button" className="btn-secondary photo-list-toggle"
+                  aria-expanded={allPhotosVisible} onClick={() => setAllPhotosVisible(value => !value)}>
+                  {allPhotosVisible ? 'Свернуть список снимков' : `Показать остальные снимки (${form.photos.length - 4})`}
+                </button>}
               </>
             )}
           </div>
@@ -645,13 +691,14 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
               autoComplete="off"
             />
           </div>
+          </fieldset>
         </form>
       </Modal>
 
       {showDiscardConfirm && (
         <ConfirmModal
           title="Закрыть без сохранения?"
-          message="В форме есть несохранённые изменения. Если закрыть сейчас, они будут потеряны."
+          message={photoProgress ? 'Снимки ещё обрабатываются. Если закрыть форму сейчас, они не будут добавлены.' : 'В форме есть несохранённые изменения. Если закрыть сейчас, они будут потеряны.'}
           confirmLabel="Закрыть без сохранения"
           cancelLabel="Продолжить редактирование"
           onConfirm={() => {
@@ -661,6 +708,9 @@ export default function EventFormModal({ eventToEdit, onClose, onSave }) {
           onCancel={() => setShowDiscardConfirm(false)}
         />
       )}
+      {previewIndex !== null && form.photos[previewIndex] && <PhotoLightbox
+        items={form.photos.map(photo => ({ photo, title: form.title, subtitle: form.location }))}
+        index={previewIndex} onNavigate={setPreviewIndex} onClose={() => setPreviewIndex(null)} />}
     </>
   );
 }

@@ -1,5 +1,9 @@
 const UNSPECIFIED = { id: 'unspecified', label: 'Не уточнено' };
 
+export const isRecordObject = (value) => value !== null && typeof value === 'object'
+  && !Array.isArray(value) && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
+const hasOption = (dictionary, key) => typeof key === 'string' && Object.prototype.hasOwnProperty.call(dictionary, key);
+
 export const EVENT_CATEGORIES = {
   thunderstorm: {
     id: 'thunderstorm', label: 'Грозы', color: '#f59e0b', icon: 'CloudLightning',
@@ -61,15 +65,17 @@ export const getDefaultClassificationAttributes = (category, subtype = 'unspecif
 };
 
 export const normalizeClassification = (classification, legacyEventType) => {
-  const legacy = LEGACY_EVENT_TYPE_MAP[legacyEventType] || LEGACY_EVENT_TYPE_MAP.other;
-  const requestedCategory = classification?.category || legacy.category;
-  const category = EVENT_CATEGORIES[requestedCategory] ? requestedCategory : legacy.category;
-  const subtype = optionById(EVENT_CATEGORIES[category].subtypes, classification?.subtype, legacy.subtype);
-  const sourceAttributes = classification?.attributes || {};
+  const legacy = hasOption(LEGACY_EVENT_TYPE_MAP, legacyEventType) ? LEGACY_EVENT_TYPE_MAP[legacyEventType] : LEGACY_EVENT_TYPE_MAP.other;
+  const source = isRecordObject(classification) ? classification : {};
+  const requestedCategory = source.category || legacy.category;
+  const category = hasOption(EVENT_CATEGORIES, requestedCategory) ? requestedCategory : legacy.category;
+  const subtype = optionById(EVENT_CATEGORIES[category].subtypes, source.subtype, legacy.subtype);
+  const sourceAttributes = isRecordObject(source.attributes) ? source.attributes : {};
   const attributes = getDefaultClassificationAttributes(category, subtype);
   if (category === 'mcs') {
     const allowed = new Set(MCS_STRUCTURAL_FEATURES.map(feature => feature.id));
-    attributes.structuralFeatures = [...new Set((sourceAttributes.structuralFeatures || []).filter(id => allowed.has(id)))];
+    const features = Array.isArray(sourceAttributes.structuralFeatures) ? sourceAttributes.structuralFeatures : [];
+    attributes.structuralFeatures = [...new Set(features.filter(id => typeof id === 'string' && allowed.has(id)))];
   }
   if (category === 'hail') attributes.hailSizeClass = optionById(HAIL_SIZE_CLASSES, sourceAttributes.hailSizeClass);
   if (category === 'squall') attributes.squallIntensity = optionById(SQUALL_INTENSITIES, sourceAttributes.squallIntensity);
@@ -86,8 +92,35 @@ export const normalizeClassification = (classification, legacyEventType) => {
 
 export const migrateEventClassification = (event) => {
   const classification = normalizeClassification(event.classification, event.eventType);
-  const migrated = { ...event, eventType: classification.category, classification };
-  return JSON.stringify(event.classification) === JSON.stringify(classification) && event.eventType === classification.category ? event : migrated;
+  return { ...event, eventType: classification.category, classification };
+};
+
+/** Problems that would discard information when projecting a record for the UI. */
+export const getClassificationIssues = (classification, legacyEventType) => {
+  if (classification == null) {
+    return legacyEventType != null && !hasOption(LEGACY_EVENT_TYPE_MAP, legacyEventType)
+      ? ['Неизвестный старый тип явления'] : [];
+  }
+  if (!isRecordObject(classification)) return ['Некорректная структура классификации'];
+  const issues = [];
+  const normalized = normalizeClassification(classification, legacyEventType);
+  if (classification.category != null && !hasOption(EVENT_CATEGORIES, classification.category)) issues.push('Неизвестная группа явления');
+  if (classification.subtype != null && !EVENT_CATEGORIES[normalized.category].subtypes.some(item => item.id === classification.subtype)) issues.push('Неизвестный подтип явления');
+  if (classification.attributes != null && !isRecordObject(classification.attributes)) {
+    issues.push('Некорректная структура характеристик явления');
+  } else if (classification.attributes) {
+    for (const [key, value] of Object.entries(classification.attributes)) {
+      if (value == null) continue;
+      const expected = normalized.attributes[key];
+      if (key === 'structuralFeatures' && normalized.category === 'mcs') {
+        if (!Array.isArray(value) || value.some(id => !MCS_STRUCTURAL_FEATURES.some(item => item.id === id))) issues.push('Некорректные структурные признаки MCS');
+      } else if (expected === undefined || value !== expected) {
+        issues.push('Неизвестная или неподходящая характеристика явления');
+      }
+    }
+  }
+  if (Object.keys(classification).some(key => !['category', 'subtype', 'attributes'].includes(key))) issues.push('Неизвестные поля классификации');
+  return [...new Set(issues)];
 };
 
 export const getEventClassification = (event) => normalizeClassification(event?.classification, event?.eventType);

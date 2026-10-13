@@ -3,11 +3,13 @@ import { IDBFactory } from 'fake-indexeddb';
 
 import {
   getStoredEvents,
+  getStoredArchive,
   saveEvent,
   deleteEvent,
   clearAllEvents,
   buildArchiveExport,
   importArchiveJSON,
+  ArchiveImportConflictError,
   getStorageBackend,
   __resetStorageForTests
 } from './storage';
@@ -204,7 +206,7 @@ describe('legacy data migration', () => {
     expect(stored[0].photos[0].id).toBe('photo_legacy_0');
     expect(stored[0].severity).toBe('moderate');
 
-    // The upgrade is written back, so a second load returns the same shape.
+    // Read-only normalization remains compatible on the next load as well.
     __resetStorageForTests();
     expect((await getStoredEvents())[0].classification.category).toBe('tornadic');
   });
@@ -215,7 +217,8 @@ describe('legacy data migration', () => {
     __resetStorageForTests();
 
     expect(await getStoredEvents()).toEqual([]);
-    expect(localStorage.getItem('storm_archive_events_corrupt_backup')).toBe('{not json');
+    expect(localStorage.getItem('storm_archive_events')).toBe('{not json');
+    expect((await getStoredArchive()).issues).toHaveLength(1);
   });
 
   it('ignores a localStorage payload that is not an array', async () => {
@@ -274,11 +277,11 @@ describe('backup and restore', () => {
     expect(restored[0].photos[1].caption).toBe('Кадр b');
   });
 
-  it('merges an import into existing data and overwrites by id', async () => {
+  it('merges an import and overwrites by id only when explicitly requested', async () => {
     await saveEvent(draft({ id: 'evt_1', title: 'Локальная версия' }));
     const result = await importArchiveJSON(asFile({
       events: [draft({ id: 'evt_1', title: 'Версия из копии' }), draft({ id: 'evt_2', title: 'Новая' })]
-    }));
+    }), { replaceExisting: true });
 
     expect(result.imported).toBe(2);
     const stored = await getStoredEvents();
@@ -291,12 +294,11 @@ describe('backup and restore', () => {
     expect(result.imported).toBe(1);
   });
 
-  it('skips invalid records but keeps the valid ones', async () => {
-    const result = await importArchiveJSON(asFile({
+  it('rejects the whole file if any record is invalid', async () => {
+    await expect(importArchiveJSON(asFile({
       events: [draft({ id: 'ok_1' }), { title: 'нет id' }, null, 'строка']
-    }));
-    expect(result).toEqual({ imported: 1, skipped: 3, total: 4 });
-    expect(await getStoredEvents()).toHaveLength(1);
+    }))).rejects.toThrow(/Архив не изменён/);
+    expect(await getStoredEvents()).toHaveLength(0);
   });
 
   it('imports records that lack a title, rather than silently dropping them', async () => {
@@ -308,7 +310,7 @@ describe('backup and restore', () => {
   it('rejects malformed or unusable backup files', async () => {
     await expect(importArchiveJSON(asFile('{ broken'))).rejects.toThrow(/повреждён/);
     await expect(importArchiveJSON(asFile({ nope: true }))).rejects.toThrow(/Некорректный формат/);
-    await expect(importArchiveJSON(asFile({ events: [{ noId: 1 }] }))).rejects.toThrow(/ни одной корректной записи/);
+    await expect(importArchiveJSON(asFile({ events: [{ noId: 1 }] }))).rejects.toThrow(/проблемных записей/);
     await expect(importArchiveJSON(null)).rejects.toThrow(/не выбран/);
   });
 });

@@ -13,7 +13,7 @@
 
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
-  --text-muted: #64748b;
+  --text-muted: #94a3b8;
 
   --accent-blue: #38bdf8;
   --accent-cyan: #06b6d4;
@@ -116,6 +116,33 @@ ul, ol {
   white-space: nowrap;
   border: 0;
 }
+
+[hidden] { display: none !important; }
+
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 190;
+  padding: 12px 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent-blue);
+  border-radius: var(--radius-md);
+  transform: translateY(-150%);
+}
+.skip-link:focus { transform: translateY(0); }
+.section-heading { font-size: 22px; line-height: 1.3; margin-bottom: 18px; }
+.main-content-container:focus { outline: none; }
+.form-fields { border: 0; min-width: 0; }
+.form-input[aria-invalid="true"] { border-color: var(--accent-red); }
+.list-more { display: flex; flex-direction: column; align-items: center; gap: 12px; margin: 24px 0; color: var(--text-secondary); font-size: 13px; }
+.image-unavailable { display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 6px; padding: 12px; color: var(--text-secondary); background: var(--bg-main); font-size: 12px; }
+.lightbox-stage .image-unavailable { width: min(320px, 70%); min-height: 140px; border: 1px solid var(--border-color); }
+.form-photo-preview { flex-shrink: 0; border-radius: var(--radius-sm); }
+.form-photo-preview .image-unavailable { padding: 4px; }
+.form-photo-preview .image-unavailable span { display: none; }
+.photo-list-toggle { margin-top: 10px; white-space: normal; }
+.storage-check { margin-top: 10px; }
 
 .truncate {
   min-width: 0;
@@ -298,8 +325,8 @@ ul, ol {
 }
 
 .action-icon-btn {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   flex-shrink: 0;
   border-radius: var(--radius-md);
   border: 1px solid var(--border-color);
@@ -322,6 +349,7 @@ ul, ol {
 .btn-secondary,
 .btn-danger {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   justify-content: center;
   gap: 8px;
@@ -450,6 +478,7 @@ ul, ol {
 
 .app-error-banner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 10px;
   max-width: var(--content-max);
@@ -463,7 +492,7 @@ ul, ol {
 }
 
 .app-error-banner span {
-  flex: 1;
+  flex: 1 1 220px;
   min-width: 0;
 }
 
@@ -519,7 +548,7 @@ ul, ol {
   background-color: var(--bg-main);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  padding: 10px 38px;
+  padding: 10px 48px 10px 38px;
   font-size: 13px;
   outline: none;
   transition: border-color 0.2s;
@@ -535,9 +564,9 @@ ul, ol {
 
 .clear-search-btn {
   position: absolute;
-  right: 8px;
-  width: 26px;
-  height: 26px;
+  right: 2px;
+  width: 44px;
+  height: 44px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -746,6 +775,7 @@ ul, ol {
 .card-title-btn {
   display: block;
   width: 100%;
+  min-height: 44px;
   text-align: left;
   font: inherit;
   color: var(--text-primary);
@@ -823,6 +853,11 @@ ul, ol {
 .tag-item.muted {
   color: var(--text-secondary);
 }
+
+.event-card { cursor: pointer; }
+.event-card .tag-item { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.detail-modal .detail-title { margin-bottom: 12px; }
+.detail-modal .modal-title-area { margin-bottom: 18px; }
 
 /* ------------------------------------------------------------ empty states */
 
@@ -1548,6 +1583,8 @@ ul, ol {
 /* ------------------------------------------------------------------- map */
 
 .map-view-container {
+  /* Keep Leaflet's pane/control z-indices inside the map, below app dialogs. */
+  isolation: isolate;
   position: relative;
   height: clamp(420px, 72vh, 900px);
   border-radius: var(--radius-lg);
@@ -1575,6 +1612,12 @@ ul, ol {
   font-size: 12px;
   padding: 8px 14px;
   border-radius: var(--radius-full);
+}
+
+.map-tiles-notice {
+  display: table;
+  max-width: 100%;
+  margin-top: 6px;
 }
 
 .map-overlay-empty {
@@ -1632,6 +1675,10 @@ ul, ol {
   border-radius: 50%;
   border: 2px solid #ffffff;
 }
+
+.pin-group { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; color: #121618; font: 700 11px var(--font-family); }
+.map-popup-list { max-height: min(35vh, 260px); overflow-y: auto; overscroll-behavior: contain; }
+.map-popup-list .map-popup-list-btn { display: block; width: 100%; text-align: left; white-space: normal; overflow-wrap: anywhere; min-height: 44px; margin: 4px 0; }
 
 /* Leaflet's default popup is white; without these overrides the dark popup text
    was rendered on a white background and was effectively unreadable. */
@@ -2139,7 +2186,16 @@ ul, ol {
 /* Narrow desktop windows: the subtitle is the first thing to go. */
 @media (max-width: 1080px) {
   .logo-subtitle { display: none; }
-  .nav-btn { padding: 8px 11px; }
+  .nav-btn { padding: 8px; gap: 6px; }
+  .desktop-nav { gap: 0; }
+  .header-container { gap: 12px; }
+  .logo-section { flex-shrink: 0; }
+  .add-event-btn .btn-label { display: none; }
+  .add-event-btn { width: 44px; height: 44px; padding: 0; }
+}
+
+@media (min-width: 769px) and (max-width: 900px) {
+  .logo-icon-wrapper { display: none; }
 }
 
 @media (max-width: 900px) {
@@ -2150,8 +2206,7 @@ ul, ol {
 @media (max-width: 768px) {
   .desktop-nav { display: none; }
 
-  .add-event-btn .btn-label { display: none; }
-  .add-event-btn { width: 38px; height: 38px; padding: 0; }
+  .add-event-btn { display: none; }
 
   .main-content-container {
     padding-top: 18px;
@@ -2172,8 +2227,8 @@ ul, ol {
   .modal-header { padding-top: calc(14px + env(safe-area-inset-top)); }
 
   /* Tap targets grow to a comfortable size on touch screens. */
-  .icon-action-btn { width: 38px; height: 38px; }
-  .close-btn { width: 40px; height: 40px; }
+  .icon-action-btn { width: 44px; height: 44px; }
+  .close-btn { width: 44px; height: 44px; }
 
   .form-input, .form-select, .form-textarea, .search-input, .filter-select {
     /* Prevents mobile browsers from zooming when a field gets focus. */
@@ -2272,7 +2327,9 @@ ul, ol {
   .card-media-wrapper { height: 170px; }
   .empty-archive-hero { padding: 40px 18px; }
   .empty-hero-actions { flex-direction: column; align-items: stretch; width: 100%; }
-  .lightbox-nav { width: 38px; height: 38px; }
+  .lightbox-nav { width: 44px; height: 44px; }
+  .month-chart { grid-template-columns: repeat(6, 1fr); grid-template-rows: repeat(2, 1fr); height: 260px; gap: 10px 6px; }
+  .month-label { font-size: 11px; }
 }
 
 /* Short landscape windows: keep the lightbox chrome from crowding the photo. */

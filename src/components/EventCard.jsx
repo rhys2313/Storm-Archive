@@ -1,13 +1,16 @@
-import React from 'react';
+import React, { useId } from 'react';
+import ArchiveImage from './ArchiveImage';
+import { accentTextColor } from '../services/presentation';
 import { SEVERITY_LEVELS, getClassificationAttributeLabels, getClassificationLabel, getEventTypeInfo } from '../types/storm';
 import { formatEventDateTime } from '../services/events';
 import { photoPreviewSrc } from '../services/photos';
-import { Calendar, MapPin, Image as ImageIcon, Eye, Edit2, Trash2 } from 'lucide-react';
+import { Calendar, MapPin, Image as ImageIcon, Edit2, Trash2 } from 'lucide-react';
 
 const NOTES_PREVIEW_LIMIT = 160;
 const VISIBLE_TAGS = 4;
 
 function EventCard({ event, onView, onEdit, onDelete }) {
+  const titleId = useId();
   const eventType = getEventTypeInfo(event);
   const classificationLabel = getClassificationLabel(event);
   const classificationAttributes = getClassificationAttributeLabels(event);
@@ -23,7 +26,8 @@ function EventCard({ event, onView, onEdit, onDelete }) {
     : event.notes;
 
   return (
-    <article className={`event-card ${cover ? 'has-media' : 'text-only'}`}>
+    <article className={`event-card ${cover ? 'has-media' : 'text-only'}`} aria-labelledby={titleId}
+      onClick={e => { if (!e.target.closest('button, a, input')) onView(event); }}>
       {cover && (
         <button
           type="button"
@@ -31,7 +35,7 @@ function EventCard({ event, onView, onEdit, onDelete }) {
           onClick={() => onView(event)}
           aria-label={`Открыть наблюдение «${event.title}»`}
         >
-          <img
+          <ArchiveImage
             // The thumbnail keeps grids light even with hundreds of records.
             src={photoPreviewSrc(cover)}
             alt=""
@@ -51,7 +55,7 @@ function EventCard({ event, onView, onEdit, onDelete }) {
           <div className="badges-group">
             <span
               className="type-badge"
-              style={{ backgroundColor: `${eventType.color}20`, color: eventType.color, borderColor: `${eventType.color}40` }}
+              style={{ backgroundColor: `${eventType.color}20`, color: accentTextColor(eventType.color), borderColor: `${eventType.color}40` }}
             >
               <span className="badge-dot" style={{ backgroundColor: eventType.color }} />
               {classificationLabel}
@@ -60,19 +64,16 @@ function EventCard({ event, onView, onEdit, onDelete }) {
           </div>
 
           <div className="card-quick-actions">
-            <button type="button" className="icon-action-btn" onClick={() => onView(event)} title="Просмотр" aria-label="Просмотр">
-              <Eye size={16} />
-            </button>
-            <button type="button" className="icon-action-btn" onClick={() => onEdit(event)} title="Редактировать" aria-label="Редактировать">
+            <button type="button" className="icon-action-btn" onClick={() => onEdit(event)} title="Редактировать" aria-label="Редактировать" aria-describedby={titleId}>
               <Edit2 size={16} />
             </button>
-            <button type="button" className="icon-action-btn delete" onClick={() => onDelete(event.id)} title="Удалить" aria-label="Удалить">
+            <button type="button" className="icon-action-btn delete" onClick={() => onDelete(event.id)} title="Удалить" aria-label="Удалить" aria-describedby={titleId}>
               <Trash2 size={16} />
             </button>
           </div>
         </div>
 
-        <h3 className="card-title">
+        <h3 className="card-title" id={titleId}>
           <button type="button" className="card-title-btn" onClick={() => onView(event)}>{event.title}</button>
         </h3>
 

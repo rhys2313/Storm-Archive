@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { EVENT_CATEGORIES, SEVERITY_LEVELS } from '../types/storm';
 import { computeArchiveStats } from '../services/events';
+import { accentTextColor } from '../services/presentation';
 import { BarChart2, Camera, MapPin, ShieldAlert, PieChart, CalendarRange, CloudLightning } from 'lucide-react';
 
 const MONTH_LABELS = ['Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'];
@@ -10,7 +11,7 @@ const percent = (count, total) => (total > 0 ? Math.round((count / total) * 100)
 const BarRow = ({ label, color, count, total }) => (
   <div className="bar-item">
     <div className="bar-label-row">
-      <span className="bar-name" style={{ color }}>{label}</span>
+      <span className="bar-name" style={{ color: accentTextColor(color) }}>{label}</span>
       <span className="bar-val">{count} · {percent(count, total)}%</span>
     </div>
     <div className="bar-track">
@@ -46,7 +47,7 @@ export default function StatsView({ events, onOpenAddModal }) {
 
   const summaryCards = [
     { icon: CloudLightning, tone: 'blue', value: stats.total, label: 'Всего наблюдений' },
-    { icon: ShieldAlert, tone: 'amber', value: stats.severeCount, label: 'Сильных и опасных (ОЯ)' },
+    { icon: ShieldAlert, tone: 'amber', value: stats.severeCount, label: 'Сильных и опасных' },
     { icon: MapPin, tone: 'emerald', value: stats.withCoords, label: 'С координатами' },
     { icon: Camera, tone: 'purple', value: stats.photoCount, label: `Снимков (в ${stats.withPhotos} записях)` }
   ];
@@ -93,7 +94,10 @@ export default function StatsView({ events, onOpenAddModal }) {
 
         <section className="chart-box span-full">
           <h3 className="chart-title"><CalendarRange size={18} aria-hidden="true" /> Сезонное распределение</h3>
-          <div className="month-chart" role="img" aria-label="Количество наблюдений по месяцам">
+          {stats.total > stats.monthCounts.reduce((sum, count) => sum + count, 0) && <p className="form-help-text">
+            Без даты: {stats.total - stats.monthCounts.reduce((sum, count) => sum + count, 0)}. Эти записи не учтены в сезонном распределении.
+          </p>}
+          <div className="month-chart" role="img" aria-label={`Количество наблюдений по месяцам: ${stats.monthCounts.map((count, index) => `${MONTH_LABELS[index]} — ${count}`).join(', ')}`}>
             {stats.monthCounts.map((count, index) => (
               <div key={MONTH_LABELS[index]} className="month-column" title={`${MONTH_LABELS[index]}: ${count}`}>
                 <span className="month-count">{count || ''}</span>

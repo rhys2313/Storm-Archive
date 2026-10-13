@@ -4,6 +4,8 @@ import { formatEventDateTime, formatCoordinates, hasCoordinates, parseDateValue 
 import { photoPreviewSrc } from '../services/photos';
 import Modal from './Modal';
 import PhotoLightbox from './PhotoLightbox';
+import ArchiveImage from './ArchiveImage';
+import { accentTextColor } from '../services/presentation';
 import { Calendar, MapPin, Edit2, Trash2, Camera, Compass, Crosshair, Maximize2, FileText, Tag } from 'lucide-react';
 
 export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
@@ -26,14 +28,13 @@ export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
       <div className="badges-group">
         <span
           className="type-badge"
-          style={{ backgroundColor: `${eventType.color}20`, color: eventType.color, borderColor: `${eventType.color}40` }}
+          style={{ backgroundColor: `${eventType.color}20`, color: accentTextColor(eventType.color), borderColor: `${eventType.color}40` }}
         >
           <span className="badge-dot" style={{ backgroundColor: eventType.color }} />
           {classificationLabel}
         </span>
         <span className={`severity-badge ${severity.badgeClass}`}>{severity.label}</span>
       </div>
-      <h2 id="detail-modal-title" className="detail-title">{event.title}</h2>
     </div>
   );
 
@@ -56,13 +57,15 @@ export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
   return (
     <>
       <Modal
-        headerContent={header}
+        headerContent={<span className="modal-heading">Наблюдение</span>}
         onClose={onClose}
         footer={footer}
         className="detail-modal"
         size="wide"
         labelledBy="detail-modal-title"
       >
+        <h2 id="detail-modal-title" className="detail-title">{event.title}</h2>
+        {header}
         <div className="detail-meta-grid">
           <div className="meta-card">
             <Calendar size={18} className="meta-icon" aria-hidden="true" />
@@ -119,7 +122,7 @@ export default function EventDetailModal({ event, onClose, onEdit, onDelete }) {
                     onClick={() => setLightboxIndex(index)}
                     aria-label={`Открыть снимок ${index + 1} из ${photos.length}`}
                   >
-                    <img
+                    <ArchiveImage
                       src={photoPreviewSrc(photo)}
                       alt={photo.caption || ''}
                       className="photo-thumb"

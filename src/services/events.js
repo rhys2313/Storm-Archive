@@ -3,7 +3,9 @@ import {
   SEVERITY_LEVELS,
   getClassificationSearchText,
   getEventClassification,
-  migrateEventClassification
+  migrateEventClassification,
+  getClassificationIssues,
+  isRecordObject
 } from '../types/storm';
 
 export const SEVERITY_RANK = { extreme: 4, severe: 3, moderate: 2, low: 1 };
@@ -78,7 +80,7 @@ export const formatCoordinates = (event) =>
 
 /** Parses a coordinate coming from a text/number input. */
 export const parseCoordinateInput = (raw, kind) => {
-  if (raw === '' || raw === null || raw === undefined) return null;
+  if (!['string', 'number'].includes(typeof raw) || String(raw).trim() === '') return null;
   const value = typeof raw === 'number' ? raw : Number(String(raw).trim().replace(',', '.'));
   if (!Number.isFinite(value)) return null;
   const valid = kind === 'latitude' ? isValidLatitude(value) : isValidLongitude(value);
@@ -107,14 +109,26 @@ const asStringArray = (value) => {
 const normalizePhotos = (value) => {
   if (!Array.isArray(value)) return [];
   return value
-    .filter(photo => photo && typeof photo.url === 'string' && photo.url)
+    .filter(photo => isRecordObject(photo) && typeof photo.url === 'string' && photo.url)
     .map((photo, index) => ({
+      ...photo,
       id: asTrimmedString(photo.id) || `photo_legacy_${index}`,
       url: photo.url,
       thumb: typeof photo.thumb === 'string' && photo.thumb ? photo.thumb : null,
       caption: asTrimmedString(photo.caption),
-      exif: photo.exif && typeof photo.exif === 'object' ? photo.exif : {}
+      exif: normalizeExif(photo.exif)
     }));
+};
+
+const EXIF_DISPLAY_FIELDS = ['camera', 'focalLength', 'iso', 'aperture', 'exposure'];
+const isDisplayValue = (value) => typeof value === 'string' || (typeof value === 'number' && Number.isFinite(value));
+const normalizeExif = (exif) => {
+  if (!isRecordObject(exif)) return {};
+  const result = { ...exif };
+  EXIF_DISPLAY_FIELDS.forEach(key => {
+    if (result[key] != null && !isDisplayValue(result[key])) delete result[key];
+  });
+  return result;
 };
 
 const normalizeCoordinate = (value, kind) => {
@@ -128,14 +142,15 @@ const normalizeCoordinate = (value, kind) => {
  * archives created by older versions of the app.
  */
 export const normalizeEventRecord = (raw) => {
-  if (!raw || typeof raw !== 'object') return null;
+  if (!isRecordObject(raw)) return null;
 
-  const id = asTrimmedString(raw.id);
+  // Preserve the storage key exactly, including whitespace in legacy ids.
+  const id = asTrimmedString(raw.id) ? raw.id : '';
   if (!id) return null;
 
   const withClassification = migrateEventClassification(raw);
-  const severity = SEVERITY_LEVELS[raw.severity] ? raw.severity : DEFAULT_SEVERITY;
-  const date = parseDateValue(raw.date) ? raw.date : '';
+  const severity = typeof raw.severity === 'string' && Object.prototype.hasOwnProperty.call(SEVERITY_LEVELS, raw.severity) ? raw.severity : DEFAULT_SEVERITY;
+  const date = typeof raw.date === 'string' && parseDateValue(raw.date) ? raw.date : '';
   const createdAt = parseDateValue(raw.createdAt) ? raw.createdAt : new Date().toISOString();
 
   return {
@@ -155,8 +170,62 @@ export const normalizeEventRecord = (raw) => {
   };
 };
 
-export const normalizeEventList = (list) =>
-  (Array.isArray(list) ? list : []).map(normalizeEventRecord).filter(Boolean);
+export const inspectEventRecord = (raw) => {
+  try {
+    const record = normalizeEventRecord(raw);
+    if (!record) return { record: null, issues: ['Запись не является объектом или не содержит строкового идентификатора'] };
+    const issues = getClassificationIssues(raw.classification, raw.eventType);
+    for (const key of ['title', 'location', 'notes']) {
+      if (raw[key] != null && typeof raw[key] !== 'string') issues.push(`Некорректный текст записи (${key})`);
+    }
+    for (const key of ['date', 'createdAt', 'updatedAt']) {
+      if (raw[key] != null && raw[key] !== '' && (typeof raw[key] !== 'string' || !parseDateValue(raw[key]))) issues.push('Некорректная дата записи');
+    }
+    if (raw.severity != null && (typeof raw.severity !== 'string' || !Object.prototype.hasOwnProperty.call(SEVERITY_LEVELS, raw.severity))) issues.push('Неизвестная оценка интенсивности');
+    for (const key of ['latitude', 'longitude']) {
+      if (raw[key] != null && raw[key] !== '' && parseCoordinateInput(raw[key], key) === null) issues.push('Некорректные координаты');
+    }
+    if (raw.tags != null && (!Array.isArray(raw.tags) || raw.tags.some(tag => typeof tag !== 'string'))) issues.push('Некорректные теги');
+    if (raw.photos != null && !Array.isArray(raw.photos)) issues.push('Некорректный список фотографий');
+    if (raw.attachmentRefs != null && (!Array.isArray(raw.attachmentRefs) || raw.attachmentRefs.length > 0)) issues.push('Запись содержит вложения неподдерживаемого формата');
+    if (Array.isArray(raw.photos)) {
+      for (const photo of raw.photos) {
+        if (!isRecordObject(photo) || typeof photo.url !== 'string' || !photo.url) {
+          issues.push('Фотография без доступного изображения');
+          continue;
+        }
+        if (photo.id != null && typeof photo.id !== 'string') issues.push('Некорректный идентификатор фотографии');
+        if (/^blob:/i.test(photo.url)) issues.push('Фотография содержит временную ссылку вместо сохранённого изображения');
+        if (photo.caption != null && typeof photo.caption !== 'string') issues.push('Некорректная подпись фотографии');
+        if (photo.thumb != null && typeof photo.thumb !== 'string') issues.push('Некорректная миниатюра фотографии');
+        if (photo.exif != null && (!isRecordObject(photo.exif) || EXIF_DISPLAY_FIELDS.some(key => photo.exif[key] != null && !isDisplayValue(photo.exif[key])))) issues.push('Некорректные метаданные фотографии');
+      }
+      if (new Set(record.photos.map(photo => photo.id)).size !== record.photos.length) issues.push('Повторяющиеся идентификаторы фотографий');
+    }
+    return { record, issues: [...new Set(issues)] };
+  } catch {
+    return { record: null, issues: ['Не удалось безопасно прочитать запись'] };
+  }
+};
+
+export const inspectEventList = (list) => {
+  const events = [];
+  const issues = [];
+  const seen = new Set();
+  (Array.isArray(list) ? list : []).forEach((raw, index) => {
+    const result = inspectEventRecord(raw);
+    const duplicate = result.record && seen.has(result.record.id);
+    if (duplicate) result.issues.push('Повторяющийся идентификатор события');
+    else if (result.record) {
+      seen.add(result.record.id);
+      events.push(result.record);
+    }
+    if (result.issues.length) issues.push({ index, id: result.record?.id || null, message: result.issues.join('; '), unreadable: !result.record || Boolean(duplicate) });
+  });
+  return { events, issues };
+};
+
+export const normalizeEventList = (list) => inspectEventList(list).events;
 
 /* ---------------------------------------------------------- query & sort */
 

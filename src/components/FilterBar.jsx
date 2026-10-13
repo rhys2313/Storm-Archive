@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { EVENT_CATEGORIES, SEVERITY_LEVELS } from '../types/storm';
 import { SORT_OPTIONS } from '../services/events';
 import { Search, X } from 'lucide-react';
@@ -19,6 +19,7 @@ export default function FilterBar({
   isFiltered,
   onReset
 }) {
+  const searchRef = useRef(null);
   // Guards against a stale category id left over from an older archive.
   const activeCategory = categoryFilter ? EVENT_CATEGORIES[categoryFilter] : null;
   const subtypes = activeCategory?.subtypes ?? [];
@@ -34,6 +35,7 @@ export default function FilterBar({
         <div className="search-input-wrapper">
           <Search size={18} className="search-icon" aria-hidden="true" />
           <input
+            ref={searchRef}
             type="search"
             placeholder="Поиск по названию, локации, заметкам, тегам…"
             value={searchQuery}
@@ -45,7 +47,7 @@ export default function FilterBar({
             <button
               type="button"
               className="clear-search-btn"
-              onClick={() => setSearchQuery('')}
+              onClick={() => { setSearchQuery(''); searchRef.current?.focus(); }}
               aria-label="Очистить поиск"
             >
               <X size={14} />
