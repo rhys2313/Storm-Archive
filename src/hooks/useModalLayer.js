@@ -67,7 +67,7 @@ export const useModalLayer = (onDismiss, { lockScroll = true } = {}) => {
         const dialog = dialogRef.current;
         if (!dialog) return;
         const focusable = Array.from(dialog.querySelectorAll(
-          'button, input, select, textarea, a[href], [tabindex]'
+          'button, input, select, textarea, a[href], summary, [tabindex]'
         )).filter(element => element.tabIndex >= 0 && !element.matches(':disabled') &&
           !element.closest('[hidden], [inert]') && element.getClientRects().length > 0 &&
           getComputedStyle(element).visibility !== 'hidden');

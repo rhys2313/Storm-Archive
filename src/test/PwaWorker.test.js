@@ -80,7 +80,10 @@ describe('release generation and install metadata', () => {
     const manifest = JSON.parse(await readFile('public/manifest.json', 'utf8'));
     expect(manifest).toMatchObject({ id: '/', scope: '/', start_url: '/', display: 'standalone', lang: 'ru' });
     expect(manifest.icons.some(icon => icon.purpose === 'maskable')).toBe(true);
-    for (const icon of [...manifest.icons, { src: '/apple-touch-icon.png', sizes: '180x180' }]) {
+    const html = await readFile('index.html', 'utf8');
+    const apple = html.match(/<link rel="apple-touch-icon" sizes="(\d+x\d+)" href="([^"]+)"/);
+    expect(apple).not.toBeNull();
+    for (const icon of [...manifest.icons, { src: apple[2], sizes: apple[1] }]) {
       const bytes = await readFile(resolve('public', icon.src.slice(1)));
       expect(bytes.subarray(1, 4).toString()).toBe('PNG');
       expect(`${bytes.readUInt32BE(16)}x${bytes.readUInt32BE(20)}`).toBe(icon.sizes);

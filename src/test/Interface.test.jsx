@@ -74,7 +74,7 @@ it('previews an attached photo without saving or closing the form', async () => 
   expect(screen.getByRole('dialog', { name: /Просмотр фотографии 2 из 2/ })).toBeInTheDocument();
   await userEvent.keyboard('{Escape}');
   expect(screen.getByRole('dialog', { name: /Редактирование наблюдения/ })).toBeInTheDocument();
-  expect(opener).toHaveFocus();
+  await waitFor(() => expect(opener).toHaveFocus());
   expect(onSave).not.toHaveBeenCalled(); expect(onClose).not.toHaveBeenCalled();
 });
 

@@ -1,6 +1,7 @@
 import React from 'react';
 import { X } from 'lucide-react';
 import { useModalLayer } from '../hooks/useModalLayer';
+import { useLayerClosing } from '../hooks/useLayerClosing';
 
 /**
  * Standard dialog shell: backdrop, header with a close button, scrollable body
@@ -19,7 +20,9 @@ export default function Modal({
   labelledBy = 'modal-title',
   size = 'default'
 }) {
-  const { dialogRef, handleBackdropClick } = useModalLayer(onClose);
+  const closing = useLayerClosing();
+  const dismiss = closing ? () => {} : onClose;
+  const { dialogRef, handleBackdropClick } = useModalLayer(dismiss);
 
   return (
     <div className="modal-backdrop" onClick={handleBackdropClick}>
@@ -38,7 +41,13 @@ export default function Modal({
               <h2 id={labelledBy}>{title}</h2>
             </div>
           )}
-          <button type="button" className="close-btn" onClick={onClose} aria-label="Закрыть" disabled={dismissDisabled}>
+          <button
+            type="button"
+            className="close-btn"
+            onClick={dismiss}
+            aria-label="Закрыть"
+            disabled={dismissDisabled || closing}
+          >
             <X size={20} />
           </button>
         </div>

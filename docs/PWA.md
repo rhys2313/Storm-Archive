@@ -48,6 +48,24 @@ Chrome/Edge; Safari/iOS needs a separate Add to Home Screen and lifecycle check.
 
 ## Regression checks
 
+Brand assets have versioned URLs under `public/branding/`; their preparation,
+originals and future native packaging resources are documented in
+`resources/branding/README.md`. They use the existing release hash and safe
+update flow, without any user-data migration or clearing. The manifest identity,
+launch URL, scope and display mode remain stable. The old SVG favicon is not
+retained because the new originals are raster images.
+
+An installed app's OS icon can update later than its web content. Chrome 144+
+can ask the user to review a changed app icon through **Review app update**;
+new icon URLs allow Chromium to detect the change. Saving work, applying the
+normal update, closing/reopening the app and accepting that review are safe;
+clearing site data is unnecessary. Other browsers/platforms can behave
+differently. See [Chrome's icon update lifecycle](https://developer.chrome.com/blog/improvements-to-web-app-updates).
+
+`node tests/browser/branding.mjs` checks actual DOM images, favicons, Chromium
+manifest/installability metadata, the maskable safe circle and offline assets
+in fresh temporary browser contexts; it does not perform OS-level installation.
+
 Run `npm test -- --silent --maxWorkers=1 --no-file-parallelism`, then
 `npm run build`. With an externally available Playwright installation, run
 `node tests/browser/pwa.mjs`. `PLAYWRIGHT_MODULE` and `CHROME_EXECUTABLE` work as

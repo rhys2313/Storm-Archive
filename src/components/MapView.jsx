@@ -2,8 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { getClassificationLabel, getEventTypeInfo } from '../types/storm';
-import { formatEventDateShort, hasCoordinates, sortEvents } from '../services/events';
-import { accentTextColor } from '../services/presentation';
+import {
+  formatEventDateShort,
+  hasCoordinates,
+  sortEvents
+} from '../services/events';
 import { MapPin, Info } from 'lucide-react';
 
 const DEFAULT_CENTER = [55.75, 37.61];
@@ -21,7 +24,6 @@ const buildPopupContent = (event, color, onOpen) => {
 
   const type = document.createElement('span');
   type.className = 'map-popup-type';
-  type.style.color = accentTextColor(color);
   type.textContent = getClassificationLabel(event);
   root.appendChild(type);
 
@@ -30,7 +32,9 @@ const buildPopupContent = (event, color, onOpen) => {
   title.textContent = event.title;
   root.appendChild(title);
 
-  const metaParts = [formatEventDateShort(event), event.location].filter(Boolean);
+  const metaParts = [formatEventDateShort(event), event.location].filter(
+    Boolean
+  );
   if (metaParts.length > 0) {
     const meta = document.createElement('p');
     meta.className = 'map-popup-meta';
@@ -65,7 +69,9 @@ const buildLocationPopup = (events, color, onOpen) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'map-popup-btn map-popup-list-btn';
-    button.textContent = [formatEventDateShort(event), event.title].filter(Boolean).join(' — ');
+    button.textContent = [formatEventDateShort(event), event.title]
+      .filter(Boolean)
+      .join(' — ');
     button.addEventListener('click', () => onOpen(event));
     item.appendChild(button);
     list.appendChild(item);
@@ -74,12 +80,19 @@ const buildLocationPopup = (events, color, onOpen) => {
   return root;
 };
 
-export default function MapView({ events, onViewEvent, onOpenAddModal, onOpenArchive }) {
+export default function MapView({
+  events,
+  onViewEvent,
+  onOpenAddModal,
+  onOpenArchive
+}) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef(null);
   const fittedSignatureRef = useRef(null);
-  const [tilesUnavailable, setTilesUnavailable] = useState(() => !navigator.onLine);
+  const [tilesUnavailable, setTilesUnavailable] = useState(
+    () => !navigator.onLine
+  );
 
   // Keeping the callback in a ref means marker popups always call the latest
   // handler without having to rebuild every marker when the parent re-renders.
@@ -94,7 +107,13 @@ export default function MapView({ events, onViewEvent, onOpenAddModal, onOpenArc
   // Markers are rebuilt only when the mapped positions actually change, not on
   // every render of the parent.
   const markerSignature = useMemo(
-    () => mappable.map(event => `${event.id}:${event.latitude}:${event.longitude}:${event.title}:${event.severity}`).join('|'),
+    () =>
+      mappable
+        .map(
+          (event) =>
+            `${event.id}:${event.latitude}:${event.longitude}:${event.title}:${event.severity}`
+        )
+        .join('|'),
     [mappable]
   );
 
@@ -110,12 +129,15 @@ export default function MapView({ events, onViewEvent, onOpenAddModal, onOpenArc
     }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
 
     L.control.zoom({ position: 'bottomright' }).addTo(map);
-    const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      className: 'dark-map-tiles',
-      // OpenStreetMap's tile usage policy requires visible attribution.
-      attribution: '© OpenStreetMap'
-    });
+    const tiles = L.tileLayer(
+      'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      {
+        maxZoom: 19,
+        className: 'dark-map-tiles',
+        // OpenStreetMap's tile usage policy requires visible attribution.
+        attribution: '© OpenStreetMap'
+      }
+    );
     tiles.on('tileerror', () => setTilesUnavailable(true));
     tiles.on('tileload', () => setTilesUnavailable(false));
     tiles.addTo(map);
@@ -130,7 +152,10 @@ export default function MapView({ events, onViewEvent, onOpenAddModal, onOpenArc
     // Android on-screen keyboard.
     const invalidate = () => map.invalidateSize();
     const raf = requestAnimationFrame(invalidate);
-    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(invalidate) : null;
+    const observer =
+      typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(invalidate)
+        : null;
     observer?.observe(containerRef.current);
 
     return () => {
@@ -166,7 +191,10 @@ export default function MapView({ events, onViewEvent, onOpenAddModal, onOpenArc
     }
     for (const group of locations.values()) {
       const event = group[0];
-      const color = group.length > 1 ? '#38bdf8' : getEventTypeInfo(event).color || '#38bdf8';
+      const color =
+        group.length > 1
+          ? '#38bdf8'
+          : getEventTypeInfo(event).color || '#38bdf8';
       const icon = L.divIcon({
         className: 'custom-map-pin',
         html: `<span class="pin-inner ${group.length > 1 ? 'pin-group' : ''}" style="background-color:${color};box-shadow:0 0 12px ${color}80">${group.length > 1 ? group.length : ''}</span>`,
@@ -174,9 +202,18 @@ export default function MapView({ events, onViewEvent, onOpenAddModal, onOpenArc
         iconAnchor: [22, 22]
       });
 
-      const marker = L.marker([event.latitude, event.longitude], { icon, title: group.length > 1 ? `Наблюдений в этой точке: ${group.length}` : event.title });
+      const marker = L.marker([event.latitude, event.longitude], {
+        icon,
+        title:
+          group.length > 1
+            ? `Наблюдений в этой точке: ${group.length}`
+            : event.title
+      });
       marker.bindPopup(
-        () => buildLocationPopup(group, color, evt => onViewEventRef.current?.(evt)),
+        () =>
+          buildLocationPopup(group, color, (evt) =>
+            onViewEventRef.current?.(evt)
+          ),
         { className: 'custom-leaflet-popup', minWidth: 220, maxWidth: 280 }
       );
       markers.addLayer(marker);
@@ -196,29 +233,57 @@ export default function MapView({ events, onViewEvent, onOpenAddModal, onOpenArc
       <div className="map-header-info">
         <div className="map-stats-badge">
           <MapPin size={16} aria-hidden="true" />
-          <span>Наблюдений на карте: <strong>{mappable.length}</strong></span>
+          <span>
+            Наблюдений на карте: <strong>{mappable.length}</strong>
+          </span>
         </div>
-        {tilesUnavailable && <div className="map-stats-badge map-tiles-notice" role="status">
-          <span>Подложка карты недоступна. Локальные отметки и записи доступны.</span>
-        </div>}
+        {tilesUnavailable && (
+          <div className="map-stats-badge map-tiles-notice" role="status">
+            <span>
+              Подложка карты недоступна. Локальные отметки и записи доступны.
+            </span>
+          </div>
+        )}
       </div>
 
-      {mappable.length === 0 && (
-        <div className="map-overlay-empty">
-          <Info size={24} aria-hidden="true" />
-          <p className="empty-map-title">На карте пока нет отмеченных наблюдений</p>
-          <p className="empty-map-sub">
-            Укажите широту и долготу при создании записи или добавьте фотографию с сохранённым GPS в EXIF —
-            координаты подставятся автоматически.
-          </p>
-          <button type="button" className="btn-primary" onClick={onOpenAddModal}>
-            Добавить наблюдение
-          </button>
-          {events.length > 0 && <button type="button" className="btn-secondary" onClick={onOpenArchive}>Открыть архив</button>}
-        </div>
-      )}
+      <div className="map-canvas">
+        {mappable.length === 0 && (
+          <div className="map-overlay-empty">
+            <Info size={24} aria-hidden="true" />
+            <p className="empty-map-title">
+              На карте пока нет отмеченных наблюдений
+            </p>
+            <p className="empty-map-sub">
+              Укажите широту и долготу при создании записи или добавьте
+              фотографию с сохранённым GPS в EXIF — координаты подставятся
+              автоматически.
+            </p>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={onOpenAddModal}
+            >
+              Добавить наблюдение
+            </button>
+            {events.length > 0 && (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={onOpenArchive}
+              >
+                Открыть архив
+              </button>
+            )}
+          </div>
+        )}
 
-      <div ref={containerRef} className="leaflet-map-element" role="application" aria-label="Карта наблюдений" />
+        <div
+          ref={containerRef}
+          className="leaflet-map-element"
+          role="application"
+          aria-label="Карта наблюдений"
+        />
+      </div>
     </div>
   );
 }

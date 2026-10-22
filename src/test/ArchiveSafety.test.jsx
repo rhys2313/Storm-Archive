@@ -53,7 +53,7 @@ describe('archive safety messages and import confirmation', () => {
     const user = userEvent.setup();
     render(<App />);
     expect(await screen.findByRole('heading', { name: 'Записи требуют восстановления' })).toBeInTheDocument();
-    expect(screen.queryByText('Ваш Storm Archive пуст')).not.toBeInTheDocument();
+    expect(screen.queryByText('Сохраните первое наблюдение')).not.toBeInTheDocument();
     await user.click(screen.getAllByRole('button', { name: 'Данные и резервные копии', exact: true })[0]);
     const dialog = await screen.findByRole('dialog', { name: 'Данные и резервные копии' });
     expect(within(dialog).getByRole('button', { name: 'Экспорт', exact: true })).toBeEnabled();

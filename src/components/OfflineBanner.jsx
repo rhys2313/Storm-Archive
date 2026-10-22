@@ -32,7 +32,9 @@ export default function OfflineBanner({ isOnline }) {
     setIsDismissed(true);
     try {
       localStorage.setItem(DISMISS_KEY, '1');
-    } catch { /* storage may be unavailable; dismissal is then session-only */ }
+    } catch {
+      /* storage may be unavailable; dismissal is then session-only */
+    }
   };
 
   const handleInstallClick = async () => {
@@ -55,21 +57,36 @@ export default function OfflineBanner({ isOnline }) {
       {!isOnline && (
         <div className="offline-banner" role="status">
           <WifiOff size={16} aria-hidden="true" />
-          <span>Офлайн-режим. Приложение работает автономно, записи сохраняются локально.</span>
+          <span>
+            Офлайн-режим. Приложение работает автономно, записи сохраняются
+            локально.
+          </span>
         </div>
       )}
 
       {showInstallBanner && (
         <div className="pwa-install-banner">
           <div className="pwa-banner-text">
-            <strong>Установить Storm Archive</strong>
-            <span>Установите приложение на рабочий стол или телефон, чтобы работать без браузера и без интернета.</span>
+            <strong>Установить «Storm Archive»</strong>
+            <span>
+              Установите приложение на рабочий стол или телефон, чтобы работать
+              без браузера и без интернета.
+            </span>
           </div>
           <div className="pwa-banner-actions">
-            <button type="button" className="btn-primary" onClick={handleInstallClick}>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={handleInstallClick}
+            >
               <Download size={16} aria-hidden="true" /> Установить
             </button>
-            <button type="button" className="close-btn" onClick={dismiss} aria-label="Скрыть предложение установки">
+            <button
+              type="button"
+              className="close-btn"
+              onClick={dismiss}
+              aria-label="Скрыть предложение установки"
+            >
               <X size={16} />
             </button>
           </div>

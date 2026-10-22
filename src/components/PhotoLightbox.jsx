@@ -1,8 +1,18 @@
 import React, { useCallback, useEffect, useRef } from 'react';
-import { X, ChevronLeft, ChevronRight, Camera, Aperture, Timer, Ruler, Sun } from 'lucide-react';
+import {
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Camera,
+  Aperture,
+  Timer,
+  Ruler,
+  Sun
+} from 'lucide-react';
 import { useModalLayer } from '../hooks/useModalLayer';
 import { photoFullSrc } from '../services/photos';
 import ArchiveImage from './ArchiveImage';
+import { useLayerClosing } from '../hooks/useLayerClosing';
 
 const ExifRow = ({ exif }) => {
   if (!exif) return null;
@@ -35,17 +45,30 @@ const ExifRow = ({ exif }) => {
  *
  * `items` entries: { photo, title, subtitle }
  */
-export default function PhotoLightbox({ items, index, onNavigate, onClose, actions }) {
-  const { dialogRef, handleBackdropClick } = useModalLayer(onClose);
+export default function PhotoLightbox({
+  items,
+  index,
+  onNavigate,
+  onClose,
+  actions
+}) {
+  const closing = useLayerClosing();
+  const { dialogRef, handleBackdropClick } = useModalLayer(
+    closing ? () => {} : onClose
+  );
   const total = items.length;
   const current = items[index];
 
-  const go = useCallback((delta) => {
-    if (total < 2) return;
-    onNavigate((index + delta + total) % total);
-  }, [index, total, onNavigate]);
+  const go = useCallback(
+    (delta) => {
+      if (total < 2) return;
+      onNavigate((index + delta + total) % total);
+    },
+    [index, total, onNavigate]
+  );
 
   useEffect(() => {
+    if (closing) return;
     const handleKeyDown = (event) => {
       if (event.key === 'ArrowLeft') {
         event.preventDefault();
@@ -57,21 +80,31 @@ export default function PhotoLightbox({ items, index, onNavigate, onClose, actio
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [go]);
+  }, [go, closing]);
 
   // Horizontal swipe navigation for Android.
   const touchStart = useRef(null);
   const handleTouchStart = (event) => {
+    if (closing || event.touches.length !== 1) {
+      touchStart.current = null;
+      return;
+    }
     const touch = event.touches[0];
     touchStart.current = { x: touch.clientX, y: touch.clientY };
   };
   const handleTouchEnd = (event) => {
-    if (!touchStart.current) return;
-    const touch = event.changedTouches[0];
-    const dx = touch.clientX - touchStart.current.x;
-    const dy = touch.clientY - touchStart.current.y;
+    const start = touchStart.current;
     touchStart.current = null;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) go(dx < 0 ? 1 : -1);
+    if (closing || !start || event.touches.length > 0) return;
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+    const dx = touch.clientX - start.x;
+    const dy = touch.clientY - start.y;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+      // A photo swipe must not also become browser Back or a synthetic click.
+      if (event.cancelable) event.preventDefault();
+      go(dx < 0 ? 1 : -1);
+    }
   };
 
   if (!current) return null;
@@ -89,19 +122,38 @@ export default function PhotoLightbox({ items, index, onNavigate, onClose, actio
         aria-modal="true"
         aria-label={dialogLabel}
         tabIndex={-1}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
       >
         <div className="lightbox-topbar">
-          {total > 1 && <span className="lightbox-counter">{index + 1} / {total}</span>}
-          <button type="button" className="close-btn lightbox-close" onClick={onClose} aria-label="Закрыть просмотр">
+          {total > 1 && (
+            <span className="lightbox-counter">
+              {index + 1} / {total}
+            </span>
+          )}
+          <button
+            type="button"
+            className="close-btn lightbox-close"
+            onClick={onClose}
+            aria-label="Закрыть просмотр"
+          >
             <X size={22} />
           </button>
         </div>
 
-        <div className="lightbox-stage">
+        <div
+          className="lightbox-stage"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={() => {
+            touchStart.current = null;
+          }}
+        >
           {total > 1 && (
-            <button type="button" className="lightbox-nav prev" onClick={() => go(-1)} aria-label="Предыдущая фотография">
+            <button
+              type="button"
+              className="lightbox-nav prev"
+              onClick={() => go(-1)}
+              aria-label="Предыдущая фотография"
+            >
               <ChevronLeft size={26} />
             </button>
           )}
@@ -111,21 +163,37 @@ export default function PhotoLightbox({ items, index, onNavigate, onClose, actio
             // previous decoded bitmap can be released.
             key={current.photo.id || index}
             src={photoFullSrc(current.photo)}
-            alt={current.photo.caption || current.title || 'Фотография наблюдения'}
+            alt={
+              current.photo.caption || current.title || 'Фотография наблюдения'
+            }
             className="lightbox-image"
           />
 
           {total > 1 && (
-            <button type="button" className="lightbox-nav next" onClick={() => go(1)} aria-label="Следующая фотография">
+            <button
+              type="button"
+              className="lightbox-nav next"
+              onClick={() => go(1)}
+              aria-label="Следующая фотография"
+            >
               <ChevronRight size={26} />
             </button>
           )}
         </div>
 
-        <div className="lightbox-footer" tabIndex={0} role="region" aria-label="Подпись и сведения о снимке">
+        <div
+          className="lightbox-footer"
+          tabIndex={0}
+          role="region"
+          aria-label="Подпись и сведения о снимке"
+        >
           {current.title && <h3 className="lightbox-title">{current.title}</h3>}
-          {current.subtitle && <p className="lightbox-subtitle">{current.subtitle}</p>}
-          {current.photo.caption && <p className="lightbox-caption">{current.photo.caption}</p>}
+          {current.subtitle && (
+            <p className="lightbox-subtitle">{current.subtitle}</p>
+          )}
+          {current.photo.caption && (
+            <p className="lightbox-caption">{current.photo.caption}</p>
+          )}
           <ExifRow exif={current.photo.exif} />
           {actions && <div className="lightbox-actions">{actions}</div>}
         </div>

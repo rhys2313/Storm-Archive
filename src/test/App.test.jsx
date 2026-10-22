@@ -53,7 +53,7 @@ const makeImageFile = (name = 'storm.jpg') =>
 describe('empty archive', () => {
   it('greets a new user with the onboarding hero', async () => {
     await renderApp();
-    expect(screen.getByRole('heading', { name: /Ваш Storm Archive пуст/i })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: /Сохраните первое наблюдение/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Добавить первое наблюдение/i })).toBeInTheDocument();
   });
 
@@ -77,7 +77,7 @@ describe('creating an observation', () => {
     });
     expect(screen.getByText('Нижегородская обл., г. Бор')).toBeInTheDocument();
     // The onboarding hero must give way to the archive grid.
-    expect(screen.queryByRole('heading', { name: /Ваш Storm Archive пуст/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: /Сохраните первое наблюдение/i })).not.toBeInTheDocument();
   });
 
   it('refuses to save without a title and keeps the dialog open', async () => {
@@ -248,7 +248,7 @@ describe('viewing, editing and deleting', () => {
     await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /Ваш Storm Archive пуст/i })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: /Сохраните первое наблюдение/i })).toBeInTheDocument();
     });
   });
 

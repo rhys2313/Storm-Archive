@@ -38,7 +38,7 @@ describe('storage backend recovery through the application', () => {
     render(<App />);
     await screen.findByRole('heading', { name: 'Не удалось проверить весь архив', exact: true });
     expect(screen.getByText(/Нет доступа к localStorage/)).toBeInTheDocument();
-    expect(screen.queryByText('Ваш Storm Archive пуст')).not.toBeInTheDocument();
+    expect(screen.queryByText('Сохраните первое наблюдение')).not.toBeInTheDocument();
   });
   it('shows fallback records, retries access, and reveals both stores without changing originals', async () => {
     await seed([event('primary')]);
@@ -49,7 +49,7 @@ describe('storage backend recovery through the application', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole('button', { name: 'reserve', exact: true });
-    expect(screen.queryByText('Ваш Storm Archive пуст')).not.toBeInTheDocument();
+    expect(screen.queryByText('Сохраните первое наблюдение')).not.toBeInTheDocument();
     expect(screen.getByText(/основной архив не проверен/)).toBeInTheDocument();
     const dialog = await backup(user);
     expect(within(dialog).getByText('Доступных записей')).toBeInTheDocument();
@@ -116,7 +116,7 @@ describe('storage backend recovery through the application', () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByText(/Схема IndexedDB \(версия 2\)/);
-    expect(screen.queryByText('Ваш Storm Archive пуст')).not.toBeInTheDocument();
+    expect(screen.queryByText('Сохраните первое наблюдение')).not.toBeInTheDocument();
     if (!hasFallback) expect(screen.getByRole('heading', { name: 'Основной архив недоступен' })).toBeInTheDocument();
     else expect(screen.getByRole('button', { name: 'reserve', exact: true })).toBeInTheDocument();
     const dialog = await backup(user);
