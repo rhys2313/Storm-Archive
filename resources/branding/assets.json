@@ -1,5 +1,5 @@
 {
-  "version": "36100132e84e",
+  "version": "9be6c084f42b",
   "originals": {
     "logo-original.png": "d814ed0ac1d829146b0dc8f794721b5cf45e9183ec8570879c1b0f827a2e6b37",
     "avatar-original.png": "f455923ca3f5331872c1a387d8d77d125c71c0d299805fbda54536c6cfe13a66"
@@ -16,7 +16,19 @@
     1056,
     1083
   ],
-  "resampling": "nearest",
-  "background": "original opaque RGB",
+  "resampling": {
+    "logo": "lanczos alpha only",
+    "appIcons": "nearest"
+  },
+  "logoMatte": {
+    "background": 25.0,
+    "noiseCeiling": 48,
+    "opaqueFloor": 245,
+    "colours": [
+      "#ffffff",
+      "#1b201a"
+    ]
+  },
+  "background": "transparent UI logo; original opaque RGB app icons",
   "maskablePatchSize": 341
 }

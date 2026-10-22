@@ -2,7 +2,9 @@
 
 For the user-supplied logo and application icons, run
 `node tests/browser/branding.mjs` against the production preview. Its seven
-scenarios check both themes, desktop/tablet/phone layouts, actual image pixels,
+scenarios check both themes, desktop/tablet/phone layouts at 1×/2×/3× density,
+transparent logo margins/cutouts, matching contrast silhouettes, theme changes,
+normal browser smoothing, actual image pixels,
 favicon/manifest URLs, maskable safe area, Chromium installability and offline
 asset hashes. Its temporary persistent profile is separate from user profiles.
 Source originals and preparation details are in `resources/branding/README.md`.

@@ -8,6 +8,7 @@ export default function Header({
   onOpenAddModal,
   onOpenBackupModal,
   onOpenSettings,
+  theme,
   eventCount,
   isOnline
 }) {
@@ -20,7 +21,7 @@ export default function Header({
           onClick={() => setActiveTab('events')}
           aria-label="Storm Archive — открыть архив"
         >
-          <StormMark />
+          <StormMark theme={theme} />
           <span className="logo-text">
             <span className="logo-title">
               Storm

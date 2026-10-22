@@ -39,38 +39,38 @@ async function pixels(page, path) {
   }, path);
 }
 
-async function brandImages(page, width) {
+async function brandImages(page, width, theme) {
   const logos = page.locator('img.storm-mark');
   assert.equal(await logos.count(), 2, 'Header and empty archive use the same logo');
   for (const logo of await logos.all()) {
     await logo.evaluate(image => image.decode());
-    assert.equal(await logo.getAttribute('src'), prefix + 'logo.png');
+    assert.equal(await logo.getAttribute('src'), prefix + (theme === 'dark' ? 'logo.png' : 'logo-on-light.png'));
     const state = await logo.evaluate(image => {
       const css = getComputedStyle(image), box = image.getBoundingClientRect();
       return { natural: image.naturalWidth, width: box.width, height: box.height, filter: css.filter, rendering: css.imageRendering, fit: css.objectFit };
     });
-    assert.equal(state.natural, 288); assert.equal(state.width, state.height);
-    assert.equal(state.filter, 'none'); assert.equal(state.rendering, 'pixelated'); assert.equal(state.fit, 'contain');
+    assert.equal(state.natural, 576); assert.equal(state.width, state.height);
+    assert.equal(state.filter, 'none'); assert.equal(state.rendering, 'auto'); assert.equal(state.fit, 'contain');
   }
   assert.equal((await page.locator('.brand .storm-mark').boundingBox()).width, width <= 760 ? 36 : 48);
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'No horizontal overflow');
 }
 
 try {
-  for (const [theme, width, height] of [
-    ['light', 1440, 960], ['dark', 1440, 960],
-    ['light', 390, 844], ['dark', 390, 844],
-    ['light', 820, 1100], ['dark', 320, 900]
+  for (const [theme, width, height, deviceScaleFactor] of [
+    ['light', 1440, 960, 1], ['dark', 1440, 960, 2],
+    ['light', 390, 844, 3], ['dark', 390, 844, 2],
+    ['light', 820, 1100, 1], ['dark', 320, 900, 1]
   ]) {
-    const context = await browser.newContext({ viewport: { width, height }, colorScheme: theme, isMobile: width <= 760, hasTouch: width <= 760, locale: 'ru-RU' });
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor, colorScheme: theme, isMobile: width <= 760, hasTouch: width <= 760, locale: 'ru-RU' });
     const page = await context.newPage(), errors = [];
     page.on('pageerror', error => errors.push(error.message));
     try {
       await context.addInitScript(theme => localStorage.setItem('storm_archive_theme', theme), theme);
       await page.goto(url); await ready(page); await page.evaluate(() => document.fonts.ready);
-      await brandImages(page, width);
+      await brandImages(page, width, theme);
       await page.screenshot({ path: resolve(output, `${theme}-${width}.png`), animations: 'disabled', fullPage: true });
-      await context.setOffline(true); await page.reload(); await ready(page); await brandImages(page, width);
+      await context.setOffline(true); await page.reload(); await ready(page); await brandImages(page, width, theme);
       assert.deepEqual(errors, []);
       results.push(`${theme} ${width}: both logos and offline reload`);
       console.log('PASS ' + results.at(-1));
@@ -91,7 +91,7 @@ try {
   await cdp.detach();
   const icons = await page.locator('link[rel="icon"],link[rel="apple-touch-icon"]').evaluateAll(links => links.map(link => ({ path: link.getAttribute('href'), sizes: link.getAttribute('sizes') })));
   assert.equal(icons.length, 4);
-  const paths = [prefix + 'logo.png', ...manifest.icons.map(icon => icon.src), ...icons.map(icon => icon.path)];
+  const paths = [prefix + 'logo.png', prefix + 'logo-on-light.png', ...manifest.icons.map(icon => icon.src), ...icons.map(icon => icon.path)];
   for (const path of paths) {
     const response = await page.request.get(url + path);
     assert.equal(response.status(), 200, path);
@@ -111,6 +111,36 @@ try {
   const ico = await pixels(page, `/favicon.ico?v=${metadata.version}`);
   assert.equal(ico.width, 256); assert.equal(ico.height, 256);
   assert.equal(ico.transparent, 0); assert(ico.bright > 1000);
+  const transparentLogos = await page.evaluate(async prefix => {
+    const states = [];
+    for (const name of ['logo.png', 'logo-on-light.png']) {
+      const image = new Image(); image.src = prefix + name; await image.decode();
+      const canvas = document.createElement('canvas'); canvas.width = canvas.height = 288;
+      const ctx = canvas.getContext('2d'); ctx.drawImage(image, 0, 0, 288, 288);
+      const data = ctx.getImageData(0, 0, 288, 288).data;
+      const alpha = []; let badMargin = 0, opaque = 0, partial = 0;
+      for (let y = 0; y < 288; y++) for (let x = 0; x < 288; x++) {
+        const a = data[(y * 288 + x) * 4 + 3]; alpha.push(a);
+        if ((x < 10 || y < 10 || x >= 278 || y >= 278) && a) badMargin++;
+        if (a === 255) opaque++; else if (a) partial++;
+      }
+      states.push({ name, alpha, badMargin, opaque, partial, inner: data[(120 * 288 + 100) * 4 + 3], ink: [...data.slice((50 * 288 + 50) * 4, (50 * 288 + 50) * 4 + 3)] });
+    }
+    return states;
+  }, prefix);
+  assert.deepEqual(transparentLogos[0].alpha, transparentLogos[1].alpha, 'Same geometry in both contrast variants');
+  for (const logo of transparentLogos) {
+    assert.equal(logo.badMargin, 0); assert.equal(logo.inner, 0);
+    assert(logo.opaque > 30000); assert(logo.partial > 50);
+    assert.deepEqual(logo.ink, logo.name === 'logo.png' ? [255, 255, 255] : [27, 32, 26]);
+  }
+  await page.getByRole('button', { name: 'Настройки', exact: true }).click();
+  for (const [label, theme] of [['Тёмная', 'dark'], ['Светлая', 'light']]) {
+    await page.getByRole('radio', { name: new RegExp(label) }).check();
+    await brandImages(page, 1280, theme);
+  }
+  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('[data-state="closing"]'));
   // A second check is made through the worker, with network requests disabled.
   await page.evaluate(() => localStorage.setItem('branding-test-sentinel', 'preserve'));
   await persistent.setOffline(true); await page.reload(); await ready(page);

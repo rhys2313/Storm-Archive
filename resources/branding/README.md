@@ -5,11 +5,23 @@ and **ава.png** (pixel cloud, lightning and Storm Archive wordmark) to the ap
 The two `*-original.png` files are byte-for-byte originals, both opaque RGB PNG,
 1254 × 1254. Their SHA-256 values and crop coordinates are in `assets.json`.
 
-Only empty outer background margins are cropped. Every output is resized
-directly from its source crop with nearest-neighbour sampling: no tracing,
-recolouring, filtering, optical thickening or invented transparency. The
-document retains its original antialiased source pixels; the pixel artwork
-retains its original rectangular shapes. Neither source supports a true SVG.
+Only empty outer margins are cropped. The UI logo's dark raster background,
+including the lightning cutout, is removed with an alpha matte derived from
+the source luminance. Dark noise is excluded and edge RGB is decontaminated
+to avoid a baked-in dark or light fringe. No tracing, erosion or dilation
+is applied. The user approved two contrast versions:
+original white for the dark theme and existing interface ink #1b201a for
+the light theme. Both have exactly the same alpha channel and geometry.
+
+The user subsequently requested smooth document diagonals. Its alpha channel
+is resized once to 576×576 with Lanczos antialiasing, then shared by both solid
+ink colours; normal browser sampling is used at the unchanged UI sizes. This
+retains subpixel edge coverage without dark/white matte contamination.
+
+App icons are resized directly from the source crop with nearest-neighbour
+sampling. The app icon, its black background, pixel shapes and all generated
+icon bytes are unchanged by this correction; its intentional opaque field
+is appropriate for launcher masks. Neither source supports a true SVG.
 
 `prepare.py` reproduces the assets with Python + Pillow, independently of the
 web build (no added npm dependency). Runtime URLs include a hash of both
@@ -21,7 +33,7 @@ Runtime assets in `public/branding/<version>/`:
 
 | File | Size | Use |
 | --- | --- | --- |
-| logo.png | 288 × 288 | Sidebar, mobile header, empty archive |
+| logo.png / logo-on-light.png | 576 × 576, RGBA | Same transparent UI logo, white/dark ink |
 | favicon-16.png / favicon-32.png | 16 / 32 square | Browser tabs |
 | apple-touch-icon.png | 180 × 180 | Apple home screen metadata |
 | pwa-192.png / pwa-512.png | 192 / 512 square | Chromium PWA, purpose `any` |

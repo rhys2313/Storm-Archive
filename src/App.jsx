@@ -366,7 +366,7 @@ export default function App() {
           </div>
           <div className="empty-hero-relief" aria-hidden="true">
             <div className="relief-orbit">
-              <StormMark />
+              <StormMark theme={appearance.theme} />
             </div>
           </div>
         </div>
@@ -438,6 +438,7 @@ export default function App() {
         К содержимому
       </button>
       <Header
+        theme={appearance.theme}
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         onOpenAddModal={handleOpenAddModal}

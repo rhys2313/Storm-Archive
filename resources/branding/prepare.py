@@ -1,13 +1,16 @@
 """Offline asset preparation; Pillow is only needed when changing the originals.
 
 Run from any directory: python resources/branding/prepare.py
-No tracing, recolouring, alpha extraction or interpolated resizing.
+No tracing or geometry changes. The UI logo has a source-derived alpha matte,
+coverage antialiasing and two user-approved contrast colours. Pixel-art app
+icons retain nearest-neighbour resizing.
 """
 from hashlib import sha256
 from io import BytesIO
 import json
 from pathlib import Path
 import struct
+from statistics import median
 
 from PIL import Image
 
@@ -25,6 +28,21 @@ avatar_box = (207, 234, 1056, 1083)
 logo = Image.open(BytesIO(logo_bytes)).crop(logo_box)
 avatar = Image.open(BytesIO(avatar_bytes)).crop(avatar_box)
 
+# Recover coverage from the original white-on-dark raster. Remove the dark
+# matte from edge RGB too: keeping its blended grey would create a fringe.
+# This does not trace, dilate or erode the silhouette.
+border = [logo.getpixel((x, y)) for y in range(logo.height)
+          for x in range(logo.width)
+          if x == 0 or y == 0 or x == logo.width - 1 or y == logo.height - 1]
+background = median(sum(pixel) / 3 for pixel in border)
+alpha = Image.new("L", logo.size)
+alpha.putdata([
+    0 if sum(pixel) / 3 <= 48 else
+    255 if sum(pixel) / 3 >= 245 else
+    round(255 * (sum(pixel) / 3 - background) / (255 - background))
+    for pixel in logo.get_flattened_data()
+])
+
 
 def resized(image, size):
     return image.resize((size, size), Image.Resampling.NEAREST)
@@ -34,7 +52,14 @@ def save(image, path):
     image.save(path, format="PNG", optimize=True)
 
 
-save(resized(logo, 288), destination / "logo.png")
+# Resample coverage once at nearly the original resolution. Both colours use
+# this same matte; resizing already-composited RGB would bake a fringe back in.
+logo_alpha = alpha.resize((576, 576), Image.Resampling.LANCZOS)
+for name, colour in [("logo", (255, 255, 255)),
+                     ("logo-on-light", (27, 32, 26))]:
+    transparent_logo = Image.new("RGBA", logo_alpha.size, colour + (0,))
+    transparent_logo.putalpha(logo_alpha)
+    save(transparent_logo, destination / (name + ".png"))
 for name, size in [("favicon-16", 16), ("favicon-32", 32),
                    ("apple-touch-icon", 180), ("pwa-192", 192), ("pwa-512", 512)]:
     save(resized(avatar, size), destination / (name + ".png"))
@@ -75,7 +100,10 @@ for size, data in frames:
         "avatar-original.png": sha256(avatar_bytes).hexdigest()
     },
     "logoCrop": logo_box, "avatarCrop": avatar_box,
-    "resampling": "nearest", "background": "original opaque RGB",
+    "resampling": {"logo": "lanczos alpha only", "appIcons": "nearest"},
+    "logoMatte": {"background": background, "noiseCeiling": 48,
+                  "opaqueFloor": 245, "colours": ["#ffffff", "#1b201a"]},
+    "background": "transparent UI logo; original opaque RGB app icons",
     "maskablePatchSize": patch_size
 }, indent=2) + "\n", encoding="utf-8")
 print(f"Prepared public/branding/{version}; maskable patch {patch_size}px")

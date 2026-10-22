@@ -13,7 +13,7 @@ const root = fileURLToPath(new URL('../../', import.meta.url));
 const brandManifest = JSON.parse(await readFile(resolve(root, 'public/manifest.json'), 'utf8'));
 const brandDirectory = brandManifest.icons[0].src.replace(/[^/]+$/, '');
 const brandResources = await Promise.all(
-  [...brandManifest.icons.map(icon => icon.src), brandDirectory + 'logo.png', '/favicon.ico'].map(async path => ({
+  [...brandManifest.icons.map(icon => icon.src), brandDirectory + 'logo.png', brandDirectory + 'logo-on-light.png', '/favicon.ico'].map(async path => ({
     path, hash: createHash('sha256').update(await readFile(resolve(root, 'public', path.slice(1)))).digest('hex')
   }))
 );
@@ -241,7 +241,8 @@ async function retained(page) {
   );
   // Also check real branding after offline starts and after legacy SW upgrades.
   const logo = page.locator('.brand img.storm-mark');
-  assert.equal(await logo.getAttribute('src'), brandDirectory + 'logo.png');
+  const dark = await page.evaluate(() => document.documentElement.dataset.theme === 'dark');
+  assert.equal(await logo.getAttribute('src'), brandDirectory + (dark ? 'logo.png' : 'logo-on-light.png'));
   await logo.evaluate(image => image.decode());
   for (const { path, hash } of brandResources) {
     const actual = await page.evaluate(async path => {
@@ -612,6 +613,12 @@ try {
     await scenario(
       'migration from actual legacy production worker',
       async () => {
+        // Earlier scenarios deliberately kill HTTP connections and fail installs.
+        // Give the separate legacy migration its own origin; old→new updates
+        // within this scenario still use that same origin and retained data.
+        await stopServer();
+        port = 0;
+        await startServer();
         directory = resolve(process.env.STORM_LEGACY_DIST);
         const ctx = await context();
         try {
@@ -656,7 +663,24 @@ try {
               [...document.querySelectorAll('button')].some(
                 (button) => button.textContent === 'Обновить приложение'
               )
-          );
+          ).catch(async error => {
+            const diagnostic = await next.evaluate(async () => {
+              const registration = await navigator.serviceWorker.getRegistration();
+              return {
+                body: document.body.innerText,
+                scripts: [...document.scripts].map(script => script.src),
+                controller: navigator.serviceWorker.controller?.state,
+                active: registration?.active?.state,
+                waiting: registration?.waiting?.state,
+                installing: registration?.installing?.state,
+                caches: await caches.keys()
+              };
+            });
+            await writeFile(resolve(temporary, 'legacy-upgrade-failure.json'), JSON.stringify(diagnostic, null, 2));
+            await next.screenshot({ path: resolve(temporary, 'legacy-upgrade-failure.png') });
+            console.error('Legacy upgrade diagnostics: ' + temporary);
+            throw error;
+          });
           const offer = next.getByRole('button', {
             name: 'Обновить приложение',
             exact: true
